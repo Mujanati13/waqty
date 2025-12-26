@@ -99,29 +99,14 @@ WSGI_APPLICATION = 'maghrebIt_backend.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
 
-
-
-# DATABASES = {
-#    'default': {
-#         'ENGINE': 'django.db.backends.mysql',
-#         'NAME': "mciv6",
-#         'USER': "root",
-#         'PASSWORD': "@#@#@#@#Test1234",
-#         'HOST': "51.38.99.75",
-#         'PORT': '3306',
-       
-#     }
-# }
-
 DATABASES = {
     'default': {
-          # mysql
         'ENGINE': 'django.db.backends.mysql',
-        'NAME': "maghrebit",
-        'USER': "root",
-        'PASSWORD': "simo1234",
-        'HOST': "localhost",
-        'PORT': '3306',
+        'NAME': os.getenv('DB_NAME', 'maghrebit'),
+        'USER': os.getenv('DB_USER', 'root'),
+        'PASSWORD': os.getenv('DB_PASSWORD', 'simo1234'),
+        'HOST': os.getenv('DB_HOST', 'localhost'),
+        'PORT': os.getenv('DB_PORT', '3306'),
     }
 }
 
