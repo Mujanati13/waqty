@@ -34,7 +34,7 @@ ALLOWED_HOSTS="${ALLOWED_HOSTS:-localhost,127.0.0.1,51.38.99.75}"
 
 # Frontend Configuration
 FRONTEND_PORT="${FRONTEND_PORT:-5014}"
-API_BASE_URL="${API_BASE_URL:-http://51.38.99.75/api}"
+API_BASE_URL="${API_BASE_URL:-http://51.38.99.75:5013/api}"
 
 # =============================================================================
 # Helper Functions
