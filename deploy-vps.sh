@@ -63,6 +63,18 @@ check_command() {
     fi
 }
 
+check_docker_compose() {
+    if command -v docker-compose &> /dev/null; then
+        DOCKER_COMPOSE="docker-compose"
+    elif docker compose version &> /dev/null; then
+        DOCKER_COMPOSE="docker compose"
+    else
+        log_error "Docker Compose is not installed. Please install it first."
+        exit 1
+    fi
+    log_info "Using: $DOCKER_COMPOSE"
+}
+
 # =============================================================================
 # Pre-deployment Checks
 # =============================================================================
@@ -71,7 +83,7 @@ log_info "Starting pre-deployment checks..."
 
 # Check required commands
 check_command docker
-check_command docker-compose
+check_docker_compose
 check_command git
 check_command node
 check_command npm
@@ -275,7 +287,7 @@ log_success "Dockerfile updated"
 
 # Stop existing containers
 log_info "Stopping existing containers..."
-docker-compose down || true
+$DOCKER_COMPOSE down || true
 
 # Remove old images to ensure fresh build
 log_info "Cleaning up old Docker images..."
@@ -283,7 +295,7 @@ docker system prune -f
 
 # Build and start containers
 log_info "Building and starting Docker containers..."
-docker-compose up -d --build
+$DOCKER_COMPOSE up -d --build
 
 # Wait for services to be ready
 log_info "Waiting for services to start..."
@@ -537,7 +549,12 @@ log_info "Running post-deployment tasks..."
 # Create Django superuser script
 cat > $BACKEND_DIR/create_superuser.sh << 'SUPERUSER'
 #!/bin/bash
-docker-compose exec backend python manage.py createsuperuser
+cd $(dirname $0)
+if command -v docker-compose &> /dev/null; then
+    docker-compose exec backend python manage.py createsuperuser
+else
+    docker compose exec backend python manage.py createsuperuser
+fi
 SUPERUSER
 chmod +x $BACKEND_DIR/create_superuser.sh
 
@@ -557,7 +574,7 @@ echo "======================================"
 # Check Docker containers
 echo ""
 log_info "Docker Containers:"
-docker-compose -f $BACKEND_DIR/docker-compose.yml ps
+$DOCKER_COMPOSE -f $BACKEND_DIR/docker-compose.yml ps
 
 # Check PM2 processes
 echo ""
@@ -583,16 +600,16 @@ log_info "  - Database: $DB_NAME"
 log_info "  - User: $DB_USER"
 echo ""
 log_info "Logs:"
-log_info "  - Backend: docker-compose -f $BACKEND_DIR/docker-compose.yml logs -f backend"
-log_info "  - Database: docker-compose -f $BACKEND_DIR/docker-compose.yml logs -f db"
+log_info "  - Backend: cd $BACKEND_DIR && docker compose logs -f backend"
+log_info "  - Database: cd $BACKEND_DIR && docker compose logs -f db"
 log_info "  - Frontend: pm2 logs mci-mini"
 log_info "  - Nginx: sudo tail -f /var/log/nginx/access.log"
 echo ""
 log_info "Management Commands:"
 log_info "  - Create superuser: cd $BACKEND_DIR && ./create_superuser.sh"
-log_info "  - Restart backend: cd $BACKEND_DIR && docker-compose restart backend"
+log_info "  - Restart backend: cd $BACKEND_DIR && docker compose restart backend"
 log_info "  - Restart frontend: pm2 restart mci-mini"
-log_info "  - Restart all: cd $BACKEND_DIR && docker-compose restart && pm2 restart all"
+log_info "  - Restart all: cd $BACKEND_DIR && docker compose restart && pm2 restart all"
 echo ""
 log_warning "IMPORTANT: Update ALLOWED_HOSTS in .env with your domain/IP!"
 log_warning "IMPORTANT: Change default database passwords in production!"
