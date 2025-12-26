@@ -170,8 +170,6 @@ log_success "Backend environment file created"
 # Update docker-compose.yml with full configuration
 log_info "Updating docker-compose.yml..."
 cat > docker-compose.yml << 'DOCKERCOMPOSE'
-version: '3.8'
-
 services:
   db:
     image: mysql:8.0
