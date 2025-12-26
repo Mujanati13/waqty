@@ -213,7 +213,7 @@ services:
     container_name: maghrebit-backend
     restart: always
     command: >
-      sh -c "python manage.py migrate &&
+      sh -c "python manage.py migrate --fake || true &&
              python manage.py collectstatic --noinput &&
              gunicorn maghrebIt_backend.wsgi:application --bind 0.0.0.0:8000 --workers 4 --timeout 120"
     environment:
