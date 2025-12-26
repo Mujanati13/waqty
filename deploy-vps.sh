@@ -88,6 +88,14 @@ check_command git
 check_command node
 check_command npm
 
+# Check Node.js version
+NODE_VERSION=$(node -v | cut -d'v' -f2 | cut -d'.' -f1)
+if [ "$NODE_VERSION" -lt 20 ]; then
+    log_error "Node.js version $NODE_VERSION detected. Vite requires Node.js 20.19+ or 22.12+"
+    log_info "Please upgrade Node.js: curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt-get install -y nodejs"
+    exit 1
+fi
+
 log_success "All required commands are available"
 
 # =============================================================================
@@ -364,6 +372,9 @@ export const PROJECT_ENDPOINTS = {
   UPDATE_CONSULTANTS: (bdcId) => \`\${API_BASE_URL}/esn/project/\${bdcId}/consultants/\`,
   MANAGE_CONSULTANTS: (bdcId) => \`\${API_BASE_URL}/esn/project/\${bdcId}/consultants/manage/\`,
 };
+
+// BDC Endpoints (Alias for PROJECT_ENDPOINTS for backward compatibility)
+export const BDC_ENDPOINTS = PROJECT_ENDPOINTS;
 
 // CRA Imputation Endpoints (Daily entries)
 export const CRA_IMPUTATION_ENDPOINTS = {
