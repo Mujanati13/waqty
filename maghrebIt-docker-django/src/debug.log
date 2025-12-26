@@ -1,0 +1,66 @@
+INFO 2025-09-16 12:49:18,905 views 24588 27168 === REMINDER EMAIL DEBUG START ===
+INFO 2025-09-16 12:49:18,906 views 24588 27168 Parsed data: {'recipient_type': 'ESN', 'recipient_id': 17, 'subject': 'Action requise : Validation de votre profil', 'body': "Bonjour esn,\n\nVotre profil nécessite une validation de votre part.\n\nMerci de vous connecter à votre espace personnel pour compléter les informations manquantes.\n\nCordialement,\nL'équipe MaghrebIT Connect", 'template_type': 'VALIDATION_REQUIRED', 'sender': 'admin'}
+INFO 2025-09-16 12:49:18,906 views 24588 27168 Recipient type: ESN, ID: 17, Subject: Action requise : Validation de votre profil
+INFO 2025-09-16 12:49:18,906 views 24588 27168 Email backend: django_mailjet.backends.MailjetBackend
+INFO 2025-09-16 12:49:18,907 views 24588 27168 Default from email: noreply@maghrebitconnect.com
+INFO 2025-09-16 12:49:18,907 views 24588 27168 Mailjet public key: ac28c95489...
+INFO 2025-09-16 12:49:18,914 views 24588 27168 Found ESN: esn, Email: esn@gmail.com
+INFO 2025-09-16 12:49:18,915 views 24588 27168 Attempting to send email to: esn@gmail.com
+INFO 2025-09-16 12:49:20,280 views 24588 27168 send_mail returned: 1
+INFO 2025-09-16 12:49:20,288 views 24588 27168 Notification logged successfully
+INFO 2025-09-16 12:55:36,644 views 24588 22192 === REMINDER EMAIL DEBUG START ===
+INFO 2025-09-16 12:55:36,645 views 24588 22192 Parsed data: {'recipient_type': 'ESN', 'recipient_id': 17, 'subject': 'Action requise : Validation de votre profil', 'body': "Bonjour esn,\n\nVotre profil nécessite une validation de votre part.\n\nMerci de vous connecter à votre espace personnel pour compléter les informations manquantes.\n\nCordialement,\nL'équipe MaghrebIT Connect", 'template_type': 'VALIDATION_REQUIRED', 'sender': 'admin'}
+INFO 2025-09-16 12:55:36,645 views 24588 22192 Recipient type: ESN, ID: 17, Subject: Action requise : Validation de votre profil
+INFO 2025-09-16 12:55:36,646 views 24588 22192 Email backend: django_mailjet.backends.MailjetBackend
+INFO 2025-09-16 12:55:36,646 views 24588 22192 Default from email: noreply@maghrebitconnect.com
+INFO 2025-09-16 12:55:36,658 views 24588 22192 Mailjet public key: ac28c95489...
+INFO 2025-09-16 12:55:36,665 views 24588 22192 Found ESN: esn, Email: esn@gmail.com
+INFO 2025-09-16 12:55:36,666 views 24588 22192 Attempting to send email to: esn@gmail.com
+INFO 2025-09-16 12:55:38,453 views 24588 22192 send_mail returned: 1
+INFO 2025-09-16 12:55:38,471 views 24588 22192 Notification logged successfully
+INFO 2025-09-16 13:01:27,535 views 24588 28452 === REMINDER EMAIL DEBUG START ===
+INFO 2025-09-16 13:01:27,535 views 24588 28452 Parsed data: {'recipient_type': 'ESN', 'recipient_id': 18, 'subject': 'Documents requis manquants dans votre dossier', 'body': "Bonjour test0,\n\nNous avons remarqué que certains documents sont manquants dans votre dossier :\n{{missing_docs}}\n\nMerci de nous faire parvenir ces documents dans les plus brefs délais.\n\nCordialement,\nL'équipe MaghrebIT Connect", 'template_type': 'DOCUMENT_MISSING', 'sender': 'admin'}
+INFO 2025-09-16 13:01:27,535 views 24588 28452 Recipient type: ESN, ID: 18, Subject: Documents requis manquants dans votre dossier
+INFO 2025-09-16 13:01:27,536 views 24588 28452 Email backend: django_mailjet.backends.MailjetBackend
+INFO 2025-09-16 13:01:27,536 views 24588 28452 Default from email: noreply@maghrebitconnect.com
+INFO 2025-09-16 13:01:27,536 views 24588 28452 Mailjet public key: ac28c95489...
+INFO 2025-09-16 13:01:27,545 views 24588 28452 Found ESN: test0, Email: test01@gmail.com
+INFO 2025-09-16 13:01:27,546 views 24588 28452 Attempting to send email to: test01@gmail.com
+INFO 2025-09-16 13:01:30,370 views 24588 28452 send_mail returned: 1
+INFO 2025-09-16 13:01:30,385 views 24588 28452 Notification logged successfully
+INFO 2025-09-16 15:30:17,830 views 23956 19580 === REMINDER EMAIL DEBUG START ===
+INFO 2025-09-16 15:30:17,831 views 23956 19580 Parsed data: {'recipient_type': 'ESN', 'recipient_id': 18, 'subject': 'Documents requis manquants dans votre dossier', 'body': "Bonjour test0,\n\nNous avons remarqué que certains documents sont manquants dans votre dossier :\n{{missing_docs}}\n\nMerci de nous faire parvenir ces documents dans les plus brefs délais.\n\nCordialement,\nL'équipe MaghrebIT Connect", 'template_type': 'DOCUMENT_MISSING', 'sender': 'admin'}
+INFO 2025-09-16 15:30:17,831 views 23956 19580 Recipient type: ESN, ID: 18, Subject: Documents requis manquants dans votre dossier
+INFO 2025-09-16 15:30:17,832 views 23956 19580 Email backend: django.core.mail.backends.console.EmailBackend
+INFO 2025-09-16 15:30:17,832 views 23956 19580 Default from email: noreply@maghrebitconnect.com
+INFO 2025-09-16 15:30:17,855 views 23956 19580 Found ESN: test0, Email: test01@gmail.com
+INFO 2025-09-16 15:30:17,855 views 23956 19580 Attempting to send email to: test01@gmail.com
+INFO 2025-09-16 15:30:17,866 views 23956 19580 send_mail returned: 1
+INFO 2025-09-16 15:30:17,872 views 23956 19580 Notification logged successfully
+INFO 2025-09-17 11:33:11,096 views 26228 23116 === REMINDER EMAIL DEBUG START ===
+INFO 2025-09-17 11:33:11,098 views 26228 23116 Parsed data: {'recipient_type': 'ESN', 'recipient_id': 18, 'subject': 'Action requise : Validation de votre profil', 'body': "Bonjour test0,\n\nVotre profil nécessite une validation de votre part.\n\nMerci de vous connecter à votre espace personnel pour compléter les informations manquantes.\n\nCordialement,\nL'équipe MaghrebIT Connect", 'template_type': 'VALIDATION_REQUIRED', 'sender': 'admin'}
+INFO 2025-09-17 11:33:11,099 views 26228 23116 Recipient type: ESN, ID: 18, Subject: Action requise : Validation de votre profil
+INFO 2025-09-17 11:33:11,100 views 26228 23116 Email backend: django.core.mail.backends.console.EmailBackend
+INFO 2025-09-17 11:33:11,100 views 26228 23116 Default from email: noreply@maghrebitconnect.com
+INFO 2025-09-17 11:33:11,117 views 26228 23116 Found ESN: test0, Email: test01@gmail.com
+INFO 2025-09-17 11:33:11,117 views 26228 23116 Attempting to send email to: test01@gmail.com
+INFO 2025-09-17 11:33:11,139 views 26228 23116 send_mail returned: 1
+INFO 2025-09-17 11:33:11,157 views 26228 23116 Notification logged successfully
+INFO 2025-09-18 14:12:53,779 views 7060 19920 === REMINDER EMAIL DEBUG START ===
+INFO 2025-09-18 14:12:53,787 views 7060 19920 Parsed data: {'recipient_type': 'ESN', 'recipient_id': 18, 'subject': 'Action requise : Validation de votre profil', 'body': "Bonjour test0 ,\n\nVotre profil nécessite une validation de votre part.\n\nMerci de vous connecter à votre espace personnel pour compléter les informations manquantes.\n\nCordialement,\nL'équipe MaghrebIT Connect", 'template_type': 'VALIDATION_REQUIRED', 'sender': 'admin'}
+INFO 2025-09-18 14:12:53,788 views 7060 19920 Recipient type: ESN, ID: 18, Subject: Action requise : Validation de votre profil
+INFO 2025-09-18 14:12:53,788 views 7060 19920 Email backend: django.core.mail.backends.console.EmailBackend
+INFO 2025-09-18 14:12:53,789 views 7060 19920 Default from email: noreply@maghrebitconnect.com
+INFO 2025-09-18 14:12:53,797 views 7060 19920 Found ESN: test0, Email: test01@gmail.com
+INFO 2025-09-18 14:12:53,797 views 7060 19920 Attempting to send email to: test01@gmail.com
+INFO 2025-09-18 14:12:53,816 views 7060 19920 send_mail returned: 1
+INFO 2025-09-18 14:12:53,824 views 7060 19920 Notification logged successfully
+INFO 2025-09-18 14:17:16,223 views 7060 25004 === REMINDER EMAIL DEBUG START ===
+INFO 2025-09-18 14:17:16,224 views 7060 25004 Parsed data: {'recipient_type': 'CLIENT', 'recipient_id': 14, 'subject': 'Action requise : Validation de votre profil', 'body': "Bonjour ,\n\nVotre profil nécessite une validation de votre part.\n\nMerci de vous connecter à votre espace personnel pour compléter les informations manquantes.\n\nCordialement,\nL'équipe MaghrebIT Connect", 'template_type': 'VALIDATION_REQUIRED', 'sender': 'admin'}
+INFO 2025-09-18 14:17:16,224 views 7060 25004 Recipient type: CLIENT, ID: 14, Subject: Action requise : Validation de votre profil
+INFO 2025-09-18 14:17:16,225 views 7060 25004 Email backend: django.core.mail.backends.console.EmailBackend
+INFO 2025-09-18 14:17:16,226 views 7060 25004 Default from email: noreply@maghrebitconnect.com
+INFO 2025-09-18 14:17:16,241 views 7060 25004 Found Client: cleint, Email: client@gmail.com
+INFO 2025-09-18 14:17:16,242 views 7060 25004 Attempting to send email to: client@gmail.com
+INFO 2025-09-18 14:17:16,244 views 7060 25004 send_mail returned: 1
+INFO 2025-09-18 14:17:16,250 views 7060 25004 Notification logged successfully
