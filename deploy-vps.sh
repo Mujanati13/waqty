@@ -34,7 +34,7 @@ ALLOWED_HOSTS="${ALLOWED_HOSTS:-localhost,127.0.0.1}"
 
 # Frontend Configuration
 FRONTEND_PORT="${FRONTEND_PORT:-5014}"
-API_BASE_URL="${API_BASE_URL:-http://localhost:$BACKEND_PORT/api}"
+API_BASE_URL="${API_BASE_URL:-http://51.38.99.75/api}"
 
 # =============================================================================
 # Helper Functions
@@ -601,10 +601,18 @@ echo "  Deployment Summary"
 echo "======================================"
 echo ""
 log_success "Frontend URL: http://localhost or http://YOUR_VPS_IP"
+log_info "  - Frontend runs on port $FRONTEND_PORT (proxied via Nginx on port 80)"
 log_success "Backend API: http://localhost/api or http://YOUR_VPS_IP/api"
+log_info "  - Backend runs on port $BACKEND_PORT (proxied via Nginx on port 80)"
 log_success "Django Admin: http://localhost/admin or http://YOUR_VPS_IP/admin"
 echo ""
-log_info "Database: MySQL on port 3307 (mapped from container)"
+log_info "Internal Ports:"
+log_info "  - Nginx: 80 (public access point)"
+log_info "  - Frontend (PM2): $FRONTEND_PORT"
+log_info "  - Backend (Docker): $BACKEND_PORT"
+log_info "  - MySQL (Docker): 3307 (host) -> 3306 (container)"
+echo ""
+log_info "Database Configuration:"
 log_info "  - Database: $DB_NAME"
 log_info "  - User: $DB_USER"
 echo ""
