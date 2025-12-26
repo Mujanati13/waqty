@@ -1,0 +1,519 @@
+import { useState, useEffect, useMemo } from 'react';
+import { 
+  Layout, Card, Row, Col, Button, Tag, Space, Typography, 
+  Select, message, Spin, Modal, Input, Tooltip, Empty
+} from 'antd';
+import { 
+  LeftOutlined, RightOutlined, SaveOutlined, SendOutlined,
+  LogoutOutlined, CheckCircleOutlined, ClockCircleOutlined
+} from '@ant-design/icons';
+import dayjs from 'dayjs';
+import 'dayjs/locale/fr';
+import { getUserId, getEsnId, getUserName } from '../helper/auth';
+import { 
+  getImputationsByConsultant, createImputation, updateImputation, deleteImputation,
+  getCRAByConsultant, updateCRAStatus, getBDCsByConsultant, CRA_STATUS 
+} from '../services/craService';
+import { logout } from '../services/authService';
+
+dayjs.locale('fr');
+
+const { Header, Content } = Layout;
+const { Title, Text } = Typography;
+
+// Work type options
+const WORK_TYPES = [
+  { value: 'travail', label: 'Travail', color: '#52c41a' },
+  { value: 'congé', label: 'Congé', color: '#faad14' },
+  { value: 'absence', label: 'Absence', color: '#ff4d4f' },
+  { value: 'formation', label: 'Formation', color: '#1890ff' },
+];
+
+// Duration options (in hours converted to day fractions)
+const DURATION_OPTIONS = [
+  { value: '0', label: '-' },
+  { value: '0.5', label: '0.5j' },
+  { value: '1', label: '1j' },
+];
+
+const ConsultantCRA = () => {
+  const [currentMonth, setCurrentMonth] = useState(dayjs());
+  const [imputations, setImputations] = useState([]);
+  const [craRecord, setCraRecord] = useState(null);
+  const [projects, setProjects] = useState([]);
+  const [selectedProject, setSelectedProject] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [localEntries, setLocalEntries] = useState({});
+
+  const consultantId = getUserId();
+  const esnId = getEsnId();
+  const userName = getUserName();
+
+  // Generate calendar days for current month
+  const calendarDays = useMemo(() => {
+    const year = currentMonth.year();
+    const month = currentMonth.month();
+    const daysInMonth = currentMonth.daysInMonth();
+    const days = [];
+
+    for (let day = 1; day <= daysInMonth; day++) {
+      const date = dayjs(new Date(year, month, day));
+      const isWeekend = date.day() === 0 || date.day() === 6;
+      days.push({
+        day,
+        date,
+        dayName: date.format('ddd'),
+        isWeekend,
+      });
+    }
+    return days;
+  }, [currentMonth]);
+
+  // Load data when month or project changes
+  useEffect(() => {
+    loadData();
+  }, [currentMonth, selectedProject]);
+
+  // Load projects on mount
+  useEffect(() => {
+    loadProjects();
+  }, []);
+
+  const loadProjects = async () => {
+    try {
+      const period = currentMonth.format('MM_YYYY');
+      const result = await getBDCsByConsultant(consultantId, period);
+      console.log('BDCs result:', result);
+      if (result.success && result.data) {
+        // Ensure data is an array
+        const projectsList = Array.isArray(result.data) ? result.data : [result.data];
+        console.log('BDCs list:', projectsList);
+        setProjects(projectsList);
+        if (projectsList.length > 0 && !selectedProject) {
+          setSelectedProject(projectsList[0].id_bdc);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading projects:', error);
+    }
+  };
+
+  const loadData = async () => {
+    if (!selectedProject) return;
+    
+    setLoading(true);
+    try {
+      const period = currentMonth.format('MM_YYYY');
+      
+      // Load imputations
+      const imputationsResult = await getImputationsByConsultant(consultantId, period);
+      if (imputationsResult.success) {
+        // Ensure data is an array
+        const imputationsList = Array.isArray(imputationsResult.data) ? imputationsResult.data : (imputationsResult.data ? [imputationsResult.data] : []);
+        const projectImputations = imputationsList.filter(
+          imp => imp.ID_BDC === selectedProject
+        );
+        setImputations(projectImputations);
+        
+        // Initialize local entries from loaded data
+        const entries = {};
+        projectImputations.forEach(imp => {
+          entries[imp.jour] = {
+            id: imp.ID_imputation,
+            duration: imp.duree,
+            type: imp.type_jour,
+          };
+        });
+        setLocalEntries(entries);
+      }
+
+      // Load CRA record
+      const craResult = await getCRAByConsultant(consultantId, period);
+      if (craResult.success && craResult.data) {
+        const projectCra = Array.isArray(craResult.data) 
+          ? craResult.data.find(c => c.ID_BDC === selectedProject)
+          : craResult.data.ID_BDC === selectedProject ? craResult.data : null;
+        setCraRecord(projectCra);
+      }
+    } catch (error) {
+      console.error('Error loading data:', error);
+      message.error('Erreur lors du chargement des données');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handlePrevMonth = () => {
+    setCurrentMonth(prev => prev.subtract(1, 'month'));
+  };
+
+  const handleNextMonth = () => {
+    setCurrentMonth(prev => prev.add(1, 'month'));
+  };
+
+  const handleDayChange = (day, field, value) => {
+    setLocalEntries(prev => ({
+      ...prev,
+      [day]: {
+        ...prev[day],
+        [field]: value,
+      },
+    }));
+  };
+
+  const handleSave = async () => {
+    if (!selectedProject) {
+      message.warning('Veuillez sélectionner un projet');
+      return;
+    }
+
+    setSaving(true);
+    const period = currentMonth.format('MM_YYYY');
+    const project = projects.find(p => p.ID_BDC === selectedProject);
+
+    try {
+      // Process each local entry
+      for (const [dayStr, entry] of Object.entries(localEntries)) {
+        const day = parseInt(dayStr);
+        const existingImp = imputations.find(imp => imp.jour === day);
+
+        if (entry.duration && parseFloat(entry.duration) > 0) {
+          const imputationData = {
+            periode: period,
+            jour: day,
+            duree: entry.duration,
+            type_jour: entry.type || 'travail',
+            ID_collaborateur: parseInt(consultantId),
+            ID_ESN: parseInt(esnId),
+            ID_client: project?.ID_client || null,
+            ID_BDC: selectedProject,
+            statut: 'Brouillon',
+          };
+
+          if (existingImp) {
+            await updateImputation(existingImp.ID_imputation, imputationData);
+          } else {
+            await createImputation(imputationData);
+          }
+        } else if (existingImp) {
+          // Remove entry if duration is 0
+          await deleteImputation(existingImp.ID_imputation);
+        }
+      }
+
+      message.success('CRA sauvegardé');
+      loadData();
+    } catch (error) {
+      console.error('Error saving:', error);
+      message.error('Erreur lors de la sauvegarde');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSubmit = async () => {
+    // First save
+    await handleSave();
+
+    // Then update CRA status to submitted
+    if (craRecord?.ID_CRA) {
+      const result = await updateCRAStatus(craRecord.ID_CRA, CRA_STATUS.SUBMITTED);
+      if (result.success) {
+        message.success('CRA soumis pour validation');
+        loadData();
+      } else {
+        message.error(result.error || 'Erreur lors de la soumission');
+      }
+    } else {
+      message.info('Sauvegardé. Soumettez à nouveau après que le CRA soit créé.');
+    }
+  };
+
+  // Calculate totals
+  const totalDays = useMemo(() => {
+    return Object.values(localEntries).reduce((sum, entry) => {
+      return sum + (parseFloat(entry.duration) || 0);
+    }, 0);
+  }, [localEntries]);
+
+  const getStatusInfo = () => {
+    if (!craRecord) return { color: 'default', label: 'Nouveau' };
+    switch (craRecord.statut) {
+      case CRA_STATUS.DRAFT: return { color: 'default', label: 'Brouillon' };
+      case CRA_STATUS.SUBMITTED: return { color: 'processing', label: 'En attente validation ESN' };
+      case CRA_STATUS.ESN_VALIDATED: return { color: 'warning', label: 'En attente validation Client' };
+      case CRA_STATUS.VALIDATED: return { color: 'success', label: 'Validé' };
+      case CRA_STATUS.REJECTED: return { color: 'error', label: 'Refusé' };
+      default: return { color: 'default', label: craRecord.statut };
+    }
+  };
+
+  const isEditable = !craRecord || 
+    craRecord.statut === CRA_STATUS.DRAFT || 
+    craRecord.statut === CRA_STATUS.REJECTED;
+
+  const statusInfo = getStatusInfo();
+
+  return (
+    <Layout style={{ minHeight: '100vh' }}>
+      <Header style={styles.header}>
+        <div style={styles.headerContent}>
+          <Title level={4} style={styles.headerTitle}>
+            MCI Mini - Consultant
+          </Title>
+          <Space>
+            <Text style={{ color: '#fff' }}>{userName}</Text>
+            <Button 
+              type="text" 
+              icon={<LogoutOutlined />} 
+              onClick={logout}
+              style={{ color: '#fff' }}
+            >
+              Déconnexion
+            </Button>
+          </Space>
+        </div>
+      </Header>
+
+      <Content style={styles.content}>
+        {/* Project Selection & Month Navigation */}
+        <Card style={{ marginBottom: 16 }}>
+          <Row gutter={16} align="middle">
+            <Col xs={24} md={8}>
+              <Text strong>Projet: </Text>
+              <Select
+                style={{ width: 250 }}
+                value={selectedProject}
+                onChange={setSelectedProject}
+                placeholder="Sélectionner un projet"
+                options={projects.map(p => ({
+                  value: p.ID_BDC,
+                  label: p.numero_BDC || `Projet #${p.ID_BDC}`,
+                }))}
+              />
+            </Col>
+            <Col xs={24} md={8} style={{ textAlign: 'center' }}>
+              <Space>
+                <Button icon={<LeftOutlined />} onClick={handlePrevMonth} />
+                <Title level={4} style={{ margin: 0, minWidth: 180, textAlign: 'center' }}>
+                  {currentMonth.format('MMMM YYYY')}
+                </Title>
+                <Button icon={<RightOutlined />} onClick={handleNextMonth} />
+              </Space>
+            </Col>
+            <Col xs={24} md={8} style={{ textAlign: 'right' }}>
+              <Tag color={statusInfo.color} style={{ fontSize: 14, padding: '4px 12px' }}>
+                {statusInfo.label}
+              </Tag>
+            </Col>
+          </Row>
+        </Card>
+
+        {/* CRA Calendar Grid */}
+        <Card 
+          title={
+            <Row justify="space-between" align="middle">
+              <Col>
+                <Text>Saisie du CRA - Total: <strong>{totalDays} jours</strong></Text>
+              </Col>
+              <Col>
+                <Space>
+                  {WORK_TYPES.map(type => (
+                    <Tag key={type.value} color={type.color}>{type.label}</Tag>
+                  ))}
+                </Space>
+              </Col>
+            </Row>
+          }
+        >
+          {loading ? (
+            <div style={{ textAlign: 'center', padding: 40 }}>
+              <Spin size="large" />
+            </div>
+          ) : !selectedProject ? (
+            <Empty description="Sélectionnez un projet pour saisir votre CRA" />
+          ) : (
+            <>
+              {/* Calendar Grid */}
+              <div style={styles.calendarGrid}>
+                {calendarDays.map(({ day, dayName, isWeekend }) => {
+                  const entry = localEntries[day] || { duration: '0', type: 'travail' };
+                  const typeInfo = WORK_TYPES.find(t => t.value === entry.type) || WORK_TYPES[0];
+                  
+                  return (
+                    <div 
+                      key={day} 
+                      style={{
+                        ...styles.dayCell,
+                        backgroundColor: isWeekend ? '#f5f5f5' : '#fff',
+                        opacity: isWeekend ? 0.7 : 1,
+                      }}
+                    >
+                      <div style={styles.dayHeader}>
+                        <Text strong>{day}</Text>
+                        <Text type="secondary" style={{ fontSize: 11 }}>{dayName}</Text>
+                      </div>
+                      
+                      {isEditable ? (
+                        <div style={styles.dayInputs}>
+                          <Select
+                            size="small"
+                            value={entry.duration}
+                            onChange={(val) => handleDayChange(day, 'duration', val)}
+                            options={DURATION_OPTIONS}
+                            style={{ width: '100%', marginBottom: 4 }}
+                          />
+                          {parseFloat(entry.duration) > 0 && (
+                            <Select
+                              size="small"
+                              value={entry.type}
+                              onChange={(val) => handleDayChange(day, 'type', val)}
+                              style={{ width: '100%' }}
+                            >
+                              {WORK_TYPES.map(t => (
+                                <Select.Option key={t.value} value={t.value}>
+                                  <span style={{ color: t.color }}>●</span> {t.label}
+                                </Select.Option>
+                              ))}
+                            </Select>
+                          )}
+                        </div>
+                      ) : (
+                        <div style={{ textAlign: 'center', padding: 8 }}>
+                          {parseFloat(entry.duration) > 0 ? (
+                            <Tooltip title={typeInfo.label}>
+                              <Tag color={typeInfo.color}>{entry.duration}j</Tag>
+                            </Tooltip>
+                          ) : (
+                            <Text type="secondary">-</Text>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Action Buttons */}
+              {isEditable && (
+                <div style={{ marginTop: 24, textAlign: 'right' }}>
+                  <Space>
+                    <Button 
+                      icon={<SaveOutlined />}
+                      onClick={handleSave}
+                      loading={saving}
+                    >
+                      Sauvegarder
+                    </Button>
+                    <Button 
+                      type="primary"
+                      icon={<SendOutlined />}
+                      onClick={handleSubmit}
+                      loading={saving}
+                    >
+                      Soumettre pour validation
+                    </Button>
+                  </Space>
+                </div>
+              )}
+            </>
+          )}
+        </Card>
+
+        {/* Summary */}
+        <Row gutter={16} style={{ marginTop: 16 }}>
+          <Col xs={24} md={8}>
+            <Card size="small">
+              <Statistic 
+                title="Jours travaillés"
+                value={Object.values(localEntries).filter(e => e.type === 'travail').reduce((s, e) => s + (parseFloat(e.duration) || 0), 0)}
+                suffix="jours"
+                valueStyle={{ color: '#52c41a' }}
+              />
+            </Card>
+          </Col>
+          <Col xs={24} md={8}>
+            <Card size="small">
+              <Statistic 
+                title="Congés"
+                value={Object.values(localEntries).filter(e => e.type === 'congé').reduce((s, e) => s + (parseFloat(e.duration) || 0), 0)}
+                suffix="jours"
+                valueStyle={{ color: '#faad14' }}
+              />
+            </Card>
+          </Col>
+          <Col xs={24} md={8}>
+            <Card size="small">
+              <Statistic 
+                title="Total déclaré"
+                value={totalDays}
+                suffix="jours"
+              />
+            </Card>
+          </Col>
+        </Row>
+      </Content>
+    </Layout>
+  );
+};
+
+// Simple Statistic component
+const Statistic = ({ title, value, suffix, valueStyle }) => (
+  <div>
+    <Text type="secondary">{title}</Text>
+    <div>
+      <Text style={{ fontSize: 24, fontWeight: 600, ...valueStyle }}>
+        {value} <span style={{ fontSize: 14, fontWeight: 400 }}>{suffix}</span>
+      </Text>
+    </div>
+  </div>
+);
+
+const styles = {
+  header: {
+    background: '#001529',
+    padding: '0 24px',
+    display: 'flex',
+    alignItems: 'center',
+  },
+  headerContent: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    width: '100%',
+  },
+  headerTitle: {
+    color: '#fff',
+    margin: 0,
+  },
+  content: {
+    padding: 24,
+    background: '#f0f2f5',
+  },
+  calendarGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(7, 1fr)',
+    gap: 8,
+  },
+  dayCell: {
+    border: '1px solid #e8e8e8',
+    borderRadius: 6,
+    padding: 8,
+    minHeight: 90,
+  },
+  dayHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+    borderBottom: '1px solid #f0f0f0',
+    paddingBottom: 4,
+  },
+  dayInputs: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 4,
+  },
+};
+
+export default ConsultantCRA;

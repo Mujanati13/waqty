@@ -1,0 +1,19 @@
+version: '3'
+
+services:
+  maghrebit-backend:
+    build:
+      context: .
+      dockerfile: docker/django/Dockerfile
+    container_name: maghrebit-backend
+    command: python manage.py runserver 0.0.0.0:8000
+    volumes:
+      - /home/debian/storage:/storage
+      - /home/debian/storage/media:/storage/media
+      - /home/debian/storage/documents:/storage/documents
+    ports:
+      - "4001:8000"
+
+networks:
+  default:
+    driver: bridge
