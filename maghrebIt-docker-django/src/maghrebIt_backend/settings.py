@@ -36,13 +36,17 @@ else:
 # See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-803pgjkul8^9erq=1l!+p6t3q67)(z%q-is(!lxi=0ocl#ebw7'
+SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-803pgjkul8^9erq=1l!+p6t3q67)(z%q-is(!lxi=0ocl#ebw7')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
-CORS_ALLOW_ALL_ORIGINS = True
+DEBUG = os.getenv('DEBUG', 'True') == 'True'
 
-ALLOWED_HOSTS = ["*"]
+# CORS Configuration
+CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', '').split(',') if os.getenv('CORS_ALLOWED_ORIGINS') else []
+CORS_ALLOW_ALL_ORIGINS = not CORS_ALLOWED_ORIGINS  # Allow all only if no specific origins are set
+CORS_ALLOW_CREDENTIALS = os.getenv('CORS_ALLOW_CREDENTIALS', 'True') == 'True'
+
+ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '*').split(',')
 # CORS_ALLOWED_ORIGINS = []
 # Or use CORS_ALLOWED_ORIGIN_REGEX for pattern matching
 

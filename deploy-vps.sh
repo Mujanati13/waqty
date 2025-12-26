@@ -166,6 +166,10 @@ DB_PASSWORD=$DB_PASSWORD
 DB_HOST=db
 DB_PORT=3306
 
+# CORS Settings
+CORS_ALLOWED_ORIGINS=http://51.38.99.75,http://localhost:$FRONTEND_PORT,http://127.0.0.1:$FRONTEND_PORT
+CORS_ALLOW_CREDENTIALS=True
+
 # MySQL Root Password
 MYSQL_ROOT_PASSWORD=$DB_ROOT_PASSWORD
 MYSQL_DATABASE=$DB_NAME
@@ -221,6 +225,8 @@ services:
       - DB_PASSWORD=${DB_PASSWORD}
       - DB_HOST=db
       - DB_PORT=3306
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS}
+      - CORS_ALLOW_CREDENTIALS=${CORS_ALLOW_CREDENTIALS}
     volumes:
       - /home/debian/storage:/storage
       - /home/debian/storage/media:/storage/media
