@@ -1833,7 +1833,7 @@ const ESNDashboard = () => {
               )}
             </div>
 
-            {/* CRA Statistics */}
+            {/* CRA Statistics
             <div>
               <Title level={5}>
                 <BarChartOutlined /> Statistiques CRA
@@ -1872,7 +1872,7 @@ const ESNDashboard = () => {
                   </Col>
                 </Row>
               </Card>
-            </div>
+            </div> */}
 
             {/* Recent CRA Activity */}
             <div>
