@@ -655,26 +655,8 @@ server {
 
     client_max_body_size 100M;
 
-    # CORS configuration
-    set \$cors_origin "";
-    if (\$http_origin ~* "^https://${FRONTEND_DOMAIN}\$") {
-        set \$cors_origin \$http_origin;
-    }
-
-    # Root location - Backend API
+    # Let Django handle all CORS - just proxy everything
     location / {
-        # Handle CORS preflight requests
-        if (\$request_method = 'OPTIONS') {
-            add_header 'Access-Control-Allow-Origin' \$cors_origin always;
-            add_header 'Access-Control-Allow-Methods' 'GET, POST, PUT, PATCH, DELETE, OPTIONS' always;
-            add_header 'Access-Control-Allow-Headers' 'DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization,X-CSRFToken' always;
-            add_header 'Access-Control-Allow-Credentials' 'true' always;
-            add_header 'Access-Control-Max-Age' 1728000;
-            add_header 'Content-Type' 'text/plain; charset=utf-8';
-            add_header 'Content-Length' 0;
-            return 204;
-        }
-
         proxy_pass http://127.0.0.1:${BACKEND_PORT};
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
@@ -686,12 +668,6 @@ server {
         proxy_send_timeout 300;
         proxy_read_timeout 300;
         send_timeout 300;
-
-        # Add CORS headers
-        add_header 'Access-Control-Allow-Origin' \$cors_origin always;
-        add_header 'Access-Control-Allow-Methods' 'GET, POST, PUT, PATCH, DELETE, OPTIONS' always;
-        add_header 'Access-Control-Allow-Headers' 'DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization,X-CSRFToken' always;
-        add_header 'Access-Control-Allow-Credentials' 'true' always;
     }
 
     # Static files
@@ -699,7 +675,6 @@ server {
         alias /home/debian/storage/static/;
         expires 30d;
         add_header Cache-Control "public, immutable";
-        add_header Access-Control-Allow-Origin "*";
     }
 
     # Media files
@@ -707,7 +682,6 @@ server {
         alias /home/debian/storage/media/;
         expires 7d;
         add_header Cache-Control "public";
-        add_header Access-Control-Allow-Origin "*";
     }
 
     # Documents
@@ -715,7 +689,6 @@ server {
         alias /home/debian/storage/documents/;
         expires 7d;
         add_header Cache-Control "public";
-        add_header Access-Control-Allow-Origin "*";
     }
 
     # Health check
