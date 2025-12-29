@@ -12,6 +12,7 @@ export default defineConfig({
     port: 5014,
     host: '0.0.0.0',
     cors: true,
+    allowedHosts: ['waqty.albech.me', 'api-waqty.albech.me', 'localhost', '127.0.0.1'],
   },
   plugins: [react()],
 })
