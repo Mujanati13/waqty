@@ -559,6 +559,101 @@ fi
 log_success "Backend deployed successfully"
 
 # =============================================================================
+# Database Setup & Fixes
+# =============================================================================
+
+log_info "Setting up database with schema and data..."
+
+# Wait a bit more for database to be fully ready
+sleep 10
+
+# Check if we need to import the schema
+log_info "Checking database tables..."
+TABLE_COUNT=$($DOCKER_COMPOSE exec -T db mysql -u root -p${DB_ROOT_PASSWORD} ${DB_NAME} -e "SHOW TABLES;" 2>/dev/null | wc -l)
+
+if [ "$TABLE_COUNT" -lt 10 ]; then
+    log_warning "Database appears empty or incomplete. Importing schema..."
+    
+    # Import the schema and data
+    log_info "Importing schema-and-data.sql..."
+    $DOCKER_COMPOSE exec -T db mysql -u root -p${DB_ROOT_PASSWORD} ${DB_NAME} < schema-and-data.sql
+    
+    if [ $? -eq 0 ]; then
+        log_success "Database schema imported successfully"
+    else
+        log_error "Failed to import database schema"
+        $DOCKER_COMPOSE logs db
+    fi
+else
+    log_success "Database tables exist"
+fi
+
+# Verify the appeloffre table has the jours column
+log_info "Verifying database schema..."
+JOURS_CHECK=$($DOCKER_COMPOSE exec -T db mysql -u root -p${DB_ROOT_PASSWORD} ${DB_NAME} -e "SHOW COLUMNS FROM appeloffre LIKE 'jours';" 2>/dev/null | grep -c "jours")
+
+if [ "$JOURS_CHECK" -eq 0 ]; then
+    log_warning "The 'jours' column is missing. Re-importing schema..."
+    $DOCKER_COMPOSE exec -T db mysql -u root -p${DB_ROOT_PASSWORD} -e "DROP DATABASE IF EXISTS ${DB_NAME}; CREATE DATABASE ${DB_NAME};"
+    $DOCKER_COMPOSE exec -T db mysql -u root -p${DB_ROOT_PASSWORD} ${DB_NAME} < schema-and-data.sql
+    log_success "Database schema re-imported"
+fi
+
+# Create test ESN account
+log_info "Creating test ESN account..."
+
+# Create a Python script to set up test account
+cat > /tmp/setup_test_account.py << 'PYEOF'
+import sys
+import os
+sys.path.insert(0, '/src')
+os.chdir('/src')
+
+import django
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'maghrebIt_backend.settings')
+django.setup()
+
+from django.contrib.auth.hashers import make_password
+from django.db import connection
+
+# Delete existing test account
+with connection.cursor() as cursor:
+    cursor.execute("DELETE FROM esn WHERE mail_Contact = 'test@esn.com'")
+    
+    # Insert new test account
+    password_hash = make_password('password123')
+    cursor.execute("""
+        INSERT INTO esn (Raison_sociale, SIRET, Adresse, CP, Ville, Pays, mail_Contact, Tel_Contact, password, responsible)
+        VALUES ('Test ESN Inc', '12345678901234', '123 Test Street', '75001', 'Paris', 'France', 'test@esn.com', '0123456789', %s, 'Test Contact')
+    """, [password_hash])
+    
+print("✓ Test ESN account created:")
+print("  Email: test@esn.com")
+print("  Password: password123")
+PYEOF
+
+# Copy script to container and run it
+docker cp /tmp/setup_test_account.py maghrebit-backend:/tmp/
+$DOCKER_COMPOSE exec -T backend python /tmp/setup_test_account.py
+
+if [ $? -eq 0 ]; then
+    log_success "Test ESN account created"
+    echo ""
+    echo "  📧 Email: test@esn.com"
+    echo "  🔑 Password: password123"
+    echo ""
+else
+    log_warning "Failed to create test ESN account"
+fi
+
+# Restart backend to ensure all changes are loaded
+log_info "Restarting backend to apply changes..."
+$DOCKER_COMPOSE restart backend
+sleep 5
+
+log_success "Database setup completed"
+
+# =============================================================================
 # Frontend Deployment
 # =============================================================================
 
