@@ -7,7 +7,8 @@ import {
 import { 
   UserOutlined, ProjectOutlined, FileTextOutlined, 
   PlusOutlined, EditOutlined, DeleteOutlined,
-  CheckCircleOutlined, ClockCircleOutlined, LogoutOutlined
+  CheckCircleOutlined, ClockCircleOutlined, LogoutOutlined,
+  EyeOutlined, BarChartOutlined, CalendarOutlined
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { getEsnId, getUserName } from '../helper/auth';
@@ -35,6 +36,11 @@ const ESNDashboard = () => {
   const [loadingConsultants, setLoadingConsultants] = useState(false);
   const [consultantModalVisible, setConsultantModalVisible] = useState(false);
   const [isViewOnlyMode, setIsViewOnlyMode] = useState(false);
+  const [consultantActivityModalVisible, setConsultantActivityModalVisible] = useState(false);
+  const [selectedConsultantForActivity, setSelectedConsultantForActivity] = useState(null);
+  const [consultantActivityLoading, setConsultantActivityLoading] = useState(false);
+  const [consultantProjects, setConsultantProjects] = useState([]);
+  const [consultantCras, setConsultantCras] = useState([]);
   const [form] = Form.useForm();
   const [projectForm] = Form.useForm();
   const [editProjectForm] = Form.useForm();
@@ -148,6 +154,50 @@ const ESNDashboard = () => {
       loadData();
     } else {
       message.error(result.error || 'Erreur lors de la suppression');
+    }
+  };
+
+  const handleViewConsultantActivity = async (consultant) => {
+    setSelectedConsultantForActivity(consultant);
+    setConsultantActivityModalVisible(true);
+    setConsultantActivityLoading(true);
+    
+    try {
+      // Get consultant's projects
+      const projectsResult = await getProjects(esnId);
+      if (projectsResult.success) {
+        // Filter projects where this consultant is assigned
+        const allProjects = projectsResult.data || [];
+        const consultantProjectIds = new Set();
+        
+        // Check each project for this consultant
+        for (const project of allProjects) {
+          const consultantsResult = await getProjectConsultants(project.id_bdc);
+          if (consultantsResult.success) {
+            const hasConsultant = (consultantsResult.data || []).some(
+              pc => pc.id_consultant === consultant.ID_collab
+            );
+            if (hasConsultant) {
+              consultantProjectIds.add(project.id_bdc);
+            }
+          }
+        }
+        
+        const consultantProjs = allProjects.filter(p => consultantProjectIds.has(p.id_bdc));
+        setConsultantProjects(consultantProjs);
+      }
+      
+      // Get consultant's CRAs (all periods)
+      const allCras = Array.isArray(cras) ? cras.filter(
+        cra => (cra.id_consultan || cra.consultant?.id) === consultant.ID_collab
+      ) : [];
+      
+      setConsultantCras(allCras);
+    } catch (error) {
+      message.error('Erreur lors du chargement des données');
+      console.error(error);
+    } finally {
+      setConsultantActivityLoading(false);
     }
   };
 
@@ -356,6 +406,12 @@ const ESNDashboard = () => {
       key: 'actions',
       render: (_, record) => (
         <Space>
+          <Button 
+            type="text" 
+            icon={<EyeOutlined />} 
+            onClick={() => handleViewConsultantActivity(record)}
+            title="Voir l'activité"
+          />
           <Button 
             type="text" 
             icon={<EditOutlined />} 
@@ -1672,6 +1728,221 @@ const ESNDashboard = () => {
             </Form.Item>
           </Form>
         </div>
+        )}
+      </Modal>
+
+      {/* Consultant Activity Modal */}
+      <Modal
+        title={
+          selectedConsultantForActivity ? (
+            <Space>
+              <UserOutlined />
+              <span>
+                Activité de {selectedConsultantForActivity.Prenom} {selectedConsultantForActivity.Nom}
+              </span>
+            </Space>
+          ) : 'Activité du consultant'
+        }
+        open={consultantActivityModalVisible}
+        onCancel={() => {
+          setConsultantActivityModalVisible(false);
+          setSelectedConsultantForActivity(null);
+          setConsultantProjects([]);
+          setConsultantCras([]);
+        }}
+        footer={null}
+        width={900}
+      >
+        {consultantActivityLoading ? (
+          <div style={{ textAlign: 'center', padding: '40px' }}>
+            <Text>Chargement...</Text>
+          </div>
+        ) : (
+          <Space direction="vertical" style={{ width: '100%' }} size="large">
+            {/* Statistics Summary */}
+            <Card size="small">
+              <Row gutter={16}>
+                <Col span={8}>
+                  <Statistic
+                    title="Projets actifs"
+                    value={consultantProjects.length}
+                    prefix={<ProjectOutlined />}
+                  />
+                </Col>
+                <Col span={8}>
+                  <Statistic
+                    title="CRAs soumis"
+                    value={consultantCras.filter(c => 
+                      ['EVP', 'Envoyé', 'Validé', 'VE', 'VC'].includes(c.statut)
+                    ).length}
+                    prefix={<FileTextOutlined />}
+                  />
+                </Col>
+                <Col span={8}>
+                  <Statistic
+                    title="Total jours"
+                    value={consultantCras.reduce((sum, cra) => sum + (parseFloat(cra.duree || cra.duration || 0)), 0).toFixed(1)}
+                    prefix={<CalendarOutlined />}
+                  />
+                </Col>
+              </Row>
+            </Card>
+
+            {/* Projects Section */}
+            <div>
+              <Title level={5}>
+                <ProjectOutlined /> Projets assignés ({consultantProjects.length})
+              </Title>
+              {consultantProjects.length === 0 ? (
+                <Text type="secondary">Aucun projet assigné</Text>
+              ) : (
+                <Table
+                  dataSource={consultantProjects}
+                  rowKey="id_bdc"
+                  pagination={false}
+                  size="small"
+                  columns={[
+                    {
+                      title: 'Projet',
+                      dataIndex: 'project_title',
+                      key: 'project_title',
+                    },
+                    {
+                      title: 'Client',
+                      dataIndex: 'raison_sociale',
+                      key: 'raison_sociale',
+                    },
+                    {
+                      title: 'Jours',
+                      dataIndex: 'jours',
+                      key: 'jours',
+                      render: (jours) => jours || '-',
+                    },
+                    {
+                      title: 'Période',
+                      key: 'period',
+                      render: (_, record) => (
+                        <span>
+                          {record.date_debut && dayjs(record.date_debut).format('DD/MM/YYYY')} - 
+                          {record.date_fin && dayjs(record.date_fin).format('DD/MM/YYYY')}
+                        </span>
+                      ),
+                    },
+                  ]}
+                />
+              )}
+            </div>
+
+            {/* CRA Statistics */}
+            <div>
+              <Title level={5}>
+                <BarChartOutlined /> Statistiques CRA
+              </Title>
+              <Card size="small">
+                <Row gutter={[16, 16]}>
+                  <Col span={12}>
+                    <div>
+                      <Text strong>En validation : </Text>
+                      <Tag color="orange">
+                        {consultantCras.filter(c => c.statut === 'EVP' || c.statut === 'Envoyé').length}
+                      </Tag>
+                    </div>
+                  </Col>
+                  <Col span={12}>
+                    <div>
+                      <Text strong>Validés : </Text>
+                      <Tag color="green">
+                        {consultantCras.filter(c => c.statut === 'Validé' || c.statut === 'VE' || c.statut === 'VC').length}
+                      </Tag>
+                    </div>
+                  </Col>
+                  <Col span={12}>
+                    <div>
+                      <Text strong>Brouillon : </Text>
+                      <Tag color="default">
+                        {consultantCras.filter(c => c.statut === 'brouillon' || c.statut === 'Brouillon').length}
+                      </Tag>
+                    </div>
+                  </Col>
+                  <Col span={12}>
+                    <div>
+                      <Text strong>Total entrées : </Text>
+                      <Tag color="blue">{consultantCras.length}</Tag>
+                    </div>
+                  </Col>
+                </Row>
+              </Card>
+            </div>
+
+            {/* Recent CRA Activity */}
+            <div>
+              <Title level={5}>
+                <CalendarOutlined /> Activité récente (période actuelle)
+              </Title>
+              {consultantCras.filter(c => {
+                const period = c.période || c.periode;
+                return period === selectedPeriod.format('MM_YYYY');
+              }).length === 0 ? (
+                <Text type="secondary">Aucune activité pour cette période</Text>
+              ) : (
+                <Table
+                  dataSource={consultantCras.filter(c => {
+                    const period = c.période || c.periode;
+                    return period === selectedPeriod.format('MM_YYYY');
+                  }).slice(0, 10)}
+                  rowKey="id_cra"
+                  pagination={false}
+                  size="small"
+                  columns={[
+                    {
+                      title: 'Date',
+                      key: 'date',
+                      render: (_, record) => {
+                        const period = record.période || record.periode;
+                        if (!period) return '-';
+                        const [month, year] = period.split('_');
+                        const day = record.jour || record.day || 1;
+                        return `${day}/${month}/${year}`;
+                      },
+                    },
+                    {
+                      title: 'Type',
+                      dataIndex: 'type_imputation',
+                      key: 'type_imputation',
+                      render: (type) => {
+                        const isAbsence = ['CP', 'RTT', 'Maladie', 'Formation', 'Autre'].includes(type);
+                        return (
+                          <Tag color={isAbsence ? 'orange' : 'blue'}>
+                            {type || 'Travail'}
+                          </Tag>
+                        );
+                      },
+                    },
+                    {
+                      title: 'Durée',
+                      key: 'duree',
+                      render: (_, record) => {
+                        const duree = parseFloat(record.duree || record.duration || 0);
+                        return `${duree}h`;
+                      },
+                    },
+                    {
+                      title: 'Statut',
+                      dataIndex: 'statut',
+                      key: 'statut',
+                      render: (statut) => {
+                        let color = 'default';
+                        if (['Validé', 'VE', 'VC'].includes(statut)) color = 'green';
+                        else if (['EVP', 'Envoyé'].includes(statut)) color = 'orange';
+                        else if (statut === 'Refusé') color = 'red';
+                        return <Tag color={color}>{statut}</Tag>;
+                      },
+                    },
+                  ]}
+                />
+              )}
+            </div>
+          </Space>
         )}
       </Modal>
     </Layout>
