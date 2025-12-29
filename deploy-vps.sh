@@ -231,7 +231,6 @@ services:
     restart: always
     command: >
       sh -c "sleep 10 &&
-             python manage.py migrate --fake 2>/dev/null || python manage.py migrate --fake-initial --noinput || echo 'Migrations skipped' &&
              python manage.py collectstatic --noinput &&
              gunicorn maghrebIt_backend.wsgi:application --bind 0.0.0.0:8000 --workers 4 --timeout 120 --access-logfile - --error-logfile -"
     environment:
@@ -580,6 +579,11 @@ if [ "$TABLE_COUNT" -lt 10 ]; then
     
     if [ $? -eq 0 ]; then
         log_success "Database schema imported successfully"
+        
+        # Fake all Django migrations since schema already exists
+        log_info "Marking Django migrations as applied..."
+        $DOCKER_COMPOSE run --rm backend python manage.py migrate --fake
+        log_success "Migrations marked as applied"
     else
         log_error "Failed to import database schema"
         $DOCKER_COMPOSE logs db
