@@ -1807,11 +1807,7 @@ const ESNDashboard = () => {
                       dataIndex: 'project_title',
                       key: 'project_title',
                     },
-                    {
-                      title: 'Client',
-                      dataIndex: 'raison_sociale',
-                      key: 'raison_sociale',
-                    },
+                   
                     {
                       title: 'Jours',
                       dataIndex: 'jours',
