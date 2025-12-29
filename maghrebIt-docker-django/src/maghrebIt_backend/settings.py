@@ -41,8 +41,11 @@ SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-803pgjkul8^9erq=1l!+p6t3q6
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'True').lower() in ('true', '1', 'yes')
 
-# CORS Configuration
-# For production, explicitly list allowed origins
+# CORS Configuration - Allow all origins for now to debug
+CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_CREDENTIALS = True
+
+# Explicit allowed origins (used when CORS_ALLOW_ALL_ORIGINS is False)
 CORS_ALLOWED_ORIGINS = [
     "https://waqty.albech.me",
     "https://api-waqty.albech.me",
@@ -52,63 +55,50 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:5014",
 ]
 
-# Also allow origins from environment variable
-cors_origins_env = os.getenv('CORS_ALLOWED_ORIGINS', '')
-if cors_origins_env:
-    for origin in cors_origins_env.split(','):
-        origin = origin.strip()
-        if origin and origin not in CORS_ALLOWED_ORIGINS:
-            CORS_ALLOWED_ORIGINS.append(origin)
+# Allow all methods
+CORS_ALLOW_METHODS = [
+    'DELETE',
+    'GET',
+    'OPTIONS',
+    'PATCH',
+    'POST',
+    'PUT',
+]
 
-CORS_ALLOW_ALL_ORIGINS = os.getenv('CORS_ALLOW_ALL_ORIGINS', 'False').lower() in ('true', '1', 'yes')
-CORS_ALLOW_CREDENTIALS = True
+# Allow all common headers
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+]
 
-# CORS Methods
-cors_methods_env = os.getenv('CORS_ALLOW_METHODS', '')
-if cors_methods_env:
-    CORS_ALLOW_METHODS = [m.strip() for m in cors_methods_env.split(',') if m.strip()]
-else:
-    CORS_ALLOW_METHODS = [
-        'DELETE',
-        'GET',
-        'OPTIONS',
-        'PATCH',
-        'POST',
-        'PUT',
-    ]
-
-# CORS Headers
-cors_headers_env = os.getenv('CORS_ALLOW_HEADERS', '')
-if cors_headers_env:
-    CORS_ALLOW_HEADERS = [h.strip() for h in cors_headers_env.split(',') if h.strip()]
-else:
-    CORS_ALLOW_HEADERS = [
-        'accept',
-        'accept-encoding',
-        'authorization',
-        'content-type',
-        'dnt',
-        'origin',
-        'user-agent',
-        'x-csrftoken',
-        'x-requested-with',
-    ]
+# Expose headers to the browser
+CORS_EXPOSE_HEADERS = [
+    'content-type',
+    'x-csrftoken',
+]
 
 # Preflight cache duration
 CORS_PREFLIGHT_MAX_AGE = 86400
 
-ALLOWED_HOSTS = [h.strip() for h in os.getenv('ALLOWED_HOSTS', '*').split(',') if h.strip()]
+ALLOWED_HOSTS = ['*']
 
 # CSRF Trusted Origins for production
-csrf_trusted_env = os.getenv('CSRF_TRUSTED_ORIGINS', '')
-if csrf_trusted_env:
-    CSRF_TRUSTED_ORIGINS = [o.strip() for o in csrf_trusted_env.split(',') if o.strip()]
-else:
-    CSRF_TRUSTED_ORIGINS = []
+CSRF_TRUSTED_ORIGINS = [
+    "https://waqty.albech.me",
+    "https://api-waqty.albech.me",
+]
 
 # Application definition
 
 INSTALLED_APPS = [
+    'corsheaders',  # Must be before other apps
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -117,13 +107,12 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'maghrebIt',
-    'corsheaders',
 ]
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',  # MUST be first
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
-    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
     # 'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
