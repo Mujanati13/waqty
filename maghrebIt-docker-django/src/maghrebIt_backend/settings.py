@@ -42,14 +42,26 @@ SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-803pgjkul8^9erq=1l!+p6t3q6
 DEBUG = os.getenv('DEBUG', 'True').lower() in ('true', '1', 'yes')
 
 # CORS Configuration
-CORS_ALLOW_ALL_ORIGINS = os.getenv('CORS_ALLOW_ALL_ORIGINS', 'True').lower() in ('true', '1', 'yes')
-cors_origins_env = os.getenv('CORS_ALLOWED_ORIGINS', '')
-if cors_origins_env and not CORS_ALLOW_ALL_ORIGINS:
-    CORS_ALLOWED_ORIGINS = [origin.strip() for origin in cors_origins_env.split(',') if origin.strip()]
-else:
-    CORS_ALLOWED_ORIGINS = []
+# For production, explicitly list allowed origins
+CORS_ALLOWED_ORIGINS = [
+    "https://waqty.albech.me",
+    "https://api-waqty.albech.me",
+    "http://localhost:3040",
+    "http://localhost:5014",
+    "http://127.0.0.1:3040",
+    "http://127.0.0.1:5014",
+]
 
-CORS_ALLOW_CREDENTIALS = os.getenv('CORS_ALLOW_CREDENTIALS', 'True').lower() in ('true', '1', 'yes')
+# Also allow origins from environment variable
+cors_origins_env = os.getenv('CORS_ALLOWED_ORIGINS', '')
+if cors_origins_env:
+    for origin in cors_origins_env.split(','):
+        origin = origin.strip()
+        if origin and origin not in CORS_ALLOWED_ORIGINS:
+            CORS_ALLOWED_ORIGINS.append(origin)
+
+CORS_ALLOW_ALL_ORIGINS = os.getenv('CORS_ALLOW_ALL_ORIGINS', 'False').lower() in ('true', '1', 'yes')
+CORS_ALLOW_CREDENTIALS = True
 
 # CORS Methods
 cors_methods_env = os.getenv('CORS_ALLOW_METHODS', '')
