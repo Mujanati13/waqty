@@ -39,33 +39,60 @@ else:
 SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-803pgjkul8^9erq=1l!+p6t3q67)(z%q-is(!lxi=0ocl#ebw7')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.getenv('DEBUG', 'True') == 'True'
+DEBUG = os.getenv('DEBUG', 'True').lower() in ('true', '1', 'yes')
 
 # CORS Configuration
+CORS_ALLOW_ALL_ORIGINS = os.getenv('CORS_ALLOW_ALL_ORIGINS', 'True').lower() in ('true', '1', 'yes')
 cors_origins_env = os.getenv('CORS_ALLOWED_ORIGINS', '')
-if cors_origins_env and cors_origins_env != '*':
+if cors_origins_env and not CORS_ALLOW_ALL_ORIGINS:
     CORS_ALLOWED_ORIGINS = [origin.strip() for origin in cors_origins_env.split(',') if origin.strip()]
-    CORS_ALLOW_ALL_ORIGINS = False
 else:
     CORS_ALLOWED_ORIGINS = []
-    CORS_ALLOW_ALL_ORIGINS = True
 
-CORS_ALLOW_CREDENTIALS = os.getenv('CORS_ALLOW_CREDENTIALS', 'True') == 'True'
-CORS_ALLOW_HEADERS = [
-    'accept',
-    'accept-encoding',
-    'authorization',
-    'content-type',
-    'dnt',
-    'origin',
-    'user-agent',
-    'x-csrftoken',
-    'x-requested-with',
-]
+CORS_ALLOW_CREDENTIALS = os.getenv('CORS_ALLOW_CREDENTIALS', 'True').lower() in ('true', '1', 'yes')
 
-ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '*').split(',')
-# CORS_ALLOWED_ORIGINS = []
-# Or use CORS_ALLOWED_ORIGIN_REGEX for pattern matching
+# CORS Methods
+cors_methods_env = os.getenv('CORS_ALLOW_METHODS', '')
+if cors_methods_env:
+    CORS_ALLOW_METHODS = [m.strip() for m in cors_methods_env.split(',') if m.strip()]
+else:
+    CORS_ALLOW_METHODS = [
+        'DELETE',
+        'GET',
+        'OPTIONS',
+        'PATCH',
+        'POST',
+        'PUT',
+    ]
+
+# CORS Headers
+cors_headers_env = os.getenv('CORS_ALLOW_HEADERS', '')
+if cors_headers_env:
+    CORS_ALLOW_HEADERS = [h.strip() for h in cors_headers_env.split(',') if h.strip()]
+else:
+    CORS_ALLOW_HEADERS = [
+        'accept',
+        'accept-encoding',
+        'authorization',
+        'content-type',
+        'dnt',
+        'origin',
+        'user-agent',
+        'x-csrftoken',
+        'x-requested-with',
+    ]
+
+# Preflight cache duration
+CORS_PREFLIGHT_MAX_AGE = 86400
+
+ALLOWED_HOSTS = [h.strip() for h in os.getenv('ALLOWED_HOSTS', '*').split(',') if h.strip()]
+
+# CSRF Trusted Origins for production
+csrf_trusted_env = os.getenv('CSRF_TRUSTED_ORIGINS', '')
+if csrf_trusted_env:
+    CSRF_TRUSTED_ORIGINS = [o.strip() for o in csrf_trusted_env.split(',') if o.strip()]
+else:
+    CSRF_TRUSTED_ORIGINS = []
 
 # Application definition
 
@@ -161,7 +188,11 @@ AUTH_PASSWORD_VALIDATORS = [
 #     'http://localhost:3002'
 # ]
 
-SESSION_COOKIE_SECURE = True
+# Cookie settings - adjust for production
+SESSION_COOKIE_SECURE = not DEBUG
+SESSION_COOKIE_SAMESITE = 'Lax'
+CSRF_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SAMESITE = 'Lax'
 # Internationalization
 # https://docs.djangoproject.com/en/5.1/topics/i18n/
 

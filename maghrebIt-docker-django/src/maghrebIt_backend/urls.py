@@ -17,12 +17,19 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path
 from django.urls import path, include
+from django.http import JsonResponse
 
 from django.conf.urls.static import static
 from django.conf import settings
 
+# Health check endpoint
+def health_check(request):
+    return JsonResponse({'status': 'healthy', 'service': 'maghrebit-backend'})
+
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include('maghrebIt.urls')),
+    path('health/', health_check, name='health_check'),
+    path('api/health/', health_check, name='api_health_check'),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT) \
   + static(settings.DOCUMENTS_URL, document_root=settings.DOCUMENTS_ROOT)

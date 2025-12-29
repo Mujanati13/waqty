@@ -26,15 +26,24 @@ DB_USER="${DB_USER:-maghrebit_user}"
 DB_PASSWORD="${DB_PASSWORD:-changeme123}"
 DB_ROOT_PASSWORD="${DB_ROOT_PASSWORD:-rootpassword123}"
 
+# Get server IP automatically or use provided
+SERVER_IP="${SERVER_IP:-$(curl -s ifconfig.me 2>/dev/null || echo '51.38.99.75')}"
+
+# Domain Configuration
+FRONTEND_DOMAIN="${FRONTEND_DOMAIN:-waqty.albech.me}"
+BACKEND_DOMAIN="${BACKEND_DOMAIN:-api-waqty.albech.me}"
+ADMIN_EMAIL="${ADMIN_EMAIL:-admin@albech.me}"
+
 # Backend Configuration
 BACKEND_PORT="${BACKEND_PORT:-5013}"
 DJANGO_SECRET_KEY="${DJANGO_SECRET_KEY:-changeme-$(openssl rand -base64 32)}"
 DJANGO_DEBUG="${DJANGO_DEBUG:-False}"
-ALLOWED_HOSTS="${ALLOWED_HOSTS:-localhost,127.0.0.1,51.38.99.75}"
+ALLOWED_HOSTS="${ALLOWED_HOSTS:-localhost,127.0.0.1,$SERVER_IP,$FRONTEND_DOMAIN,$BACKEND_DOMAIN}"
 
 # Frontend Configuration
 FRONTEND_PORT="${FRONTEND_PORT:-5014}"
-API_BASE_URL="${API_BASE_URL:-http://51.38.99.75:5013/api}"
+# Use the API domain for backend requests
+API_BASE_URL="${API_BASE_URL:-https://$BACKEND_DOMAIN/api}"
 
 # =============================================================================
 # Helper Functions
@@ -166,15 +175,21 @@ DB_PASSWORD=$DB_PASSWORD
 DB_HOST=db
 DB_PORT=3306
 
-# CORS Settings
-CORS_ALLOWED_ORIGINS=http://51.38.99.75,http://localhost:$FRONTEND_PORT,http://127.0.0.1:$FRONTEND_PORT
+# CORS Settings - Include all possible origins (with HTTPS domains)
+CORS_ALLOWED_ORIGINS=https://$FRONTEND_DOMAIN,https://$BACKEND_DOMAIN,http://$SERVER_IP,http://localhost,http://localhost:$FRONTEND_PORT,http://127.0.0.1
+CORS_ALLOW_ALL_ORIGINS=False
 CORS_ALLOW_CREDENTIALS=True
+CORS_ALLOW_METHODS=DELETE,GET,OPTIONS,PATCH,POST,PUT
+CORS_ALLOW_HEADERS=accept,accept-encoding,authorization,content-type,dnt,origin,user-agent,x-csrftoken,x-requested-with
 
 # MySQL Root Password
 MYSQL_ROOT_PASSWORD=$DB_ROOT_PASSWORD
 MYSQL_DATABASE=$DB_NAME
 MYSQL_USER=$DB_USER
 MYSQL_PASSWORD=$DB_PASSWORD
+
+# CSRF Trusted Origins (with HTTPS)
+CSRF_TRUSTED_ORIGINS=https://$FRONTEND_DOMAIN,https://$BACKEND_DOMAIN,http://localhost,http://127.0.0.1
 EOF
 
 log_success "Backend environment file created"
@@ -198,11 +213,13 @@ services:
       - ./schema-and-data.sql:/docker-entrypoint-initdb.d/01-schema-and-data.sql
     ports:
       - "3307:3306"
+    command: --default-authentication-plugin=mysql_native_password --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 30s
     networks:
       - maghrebit_network
 
@@ -213,9 +230,9 @@ services:
     container_name: maghrebit-backend
     restart: always
     command: >
-      sh -c "python manage.py migrate --fake || true &&
+      sh -c "./wait-for-it.sh db:3306 -t 60 -- python manage.py migrate --noinput &&
              python manage.py collectstatic --noinput &&
-             gunicorn maghrebIt_backend.wsgi:application --bind 0.0.0.0:8000 --workers 4 --timeout 120"
+             gunicorn maghrebIt_backend.wsgi:application --bind 0.0.0.0:8000 --workers 4 --timeout 120 --access-logfile - --error-logfile -"
     environment:
       - SECRET_KEY=${SECRET_KEY}
       - DEBUG=${DEBUG}
@@ -226,11 +243,15 @@ services:
       - DB_HOST=db
       - DB_PORT=3306
       - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS}
+      - CORS_ALLOW_ALL_ORIGINS=${CORS_ALLOW_ALL_ORIGINS}
       - CORS_ALLOW_CREDENTIALS=${CORS_ALLOW_CREDENTIALS}
+      - CORS_ALLOW_METHODS=${CORS_ALLOW_METHODS}
+      - CORS_ALLOW_HEADERS=${CORS_ALLOW_HEADERS}
+      - CSRF_TRUSTED_ORIGINS=${CSRF_TRUSTED_ORIGINS}
     volumes:
       - /home/debian/storage:/storage
-      - /home/debian/storage/media:/storage/media
-      - /home/debian/storage/documents:/storage/documents
+      - /home/debian/storage/media:/src/media
+      - /home/debian/storage/documents:/src/documents
       - ./src:/src
       - static_volume:/src/staticfiles
     ports:
@@ -270,6 +291,7 @@ RUN apt-get update && apt-get install -y \
     default-libmysqlclient-dev \
     pkg-config \
     netcat-traditional \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Set the working directory
@@ -279,14 +301,18 @@ WORKDIR /src
 COPY /src/requirements.txt /src/
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install gunicorn if not in requirements
-RUN pip install gunicorn
+# Install gunicorn and django-cors-headers if not in requirements
+RUN pip install gunicorn django-cors-headers
+
+# Copy wait-for-it script
+COPY /docker/django/wait-for-it.sh /src/wait-for-it.sh
+RUN chmod +x /src/wait-for-it.sh
 
 # Copy project files
 COPY /src/ /src/
 
-# Create staticfiles directory
-RUN mkdir -p /src/staticfiles
+# Create staticfiles and media directories
+RUN mkdir -p /src/staticfiles /src/media /src/documents
 
 # Expose port
 EXPOSE 8000
@@ -296,6 +322,195 @@ CMD ["gunicorn", "maghrebIt_backend.wsgi:application", "--bind", "0.0.0.0:8000",
 DOCKERFILE
 
 log_success "Dockerfile updated"
+
+# Create/Update wait-for-it script
+log_info "Creating wait-for-it script..."
+cat > docker/django/wait-for-it.sh << 'WAITFORIT'
+#!/usr/bin/env bash
+# wait-for-it.sh - Wait for service to be available
+
+WAITFORIT_cmdname=${0##*/}
+
+echoerr() { if [[ $WAITFORIT_QUIET -ne 1 ]]; then echo "$@" 1>&2; fi }
+
+usage()
+{
+    cat << USAGE >&2
+Usage:
+    $WAITFORIT_cmdname host:port [-s] [-t timeout] [-- command args]
+    -h HOST | --host=HOST       Host or IP under test
+    -p PORT | --port=PORT       TCP port under test
+    -s | --strict               Only execute subcommand if the test succeeds
+    -q | --quiet                Don't output any status messages
+    -t TIMEOUT | --timeout=TIMEOUT
+                                Timeout in seconds, zero for no timeout
+    -- COMMAND ARGS             Execute command with args after the test finishes
+USAGE
+    exit 1
+}
+
+wait_for()
+{
+    if [[ $WAITFORIT_TIMEOUT -gt 0 ]]; then
+        echoerr "$WAITFORIT_cmdname: waiting $WAITFORIT_TIMEOUT seconds for $WAITFORIT_HOST:$WAITFORIT_PORT"
+    else
+        echoerr "$WAITFORIT_cmdname: waiting for $WAITFORIT_HOST:$WAITFORIT_PORT without a timeout"
+    fi
+    WAITFORIT_start_ts=$(date +%s)
+    while :
+    do
+        if [[ $WAITFORIT_ISBUSY -eq 1 ]]; then
+            nc -z $WAITFORIT_HOST $WAITFORIT_PORT
+            WAITFORIT_result=$?
+        else
+            (echo -n > /dev/tcp/$WAITFORIT_HOST/$WAITFORIT_PORT) >/dev/null 2>&1
+            WAITFORIT_result=$?
+        fi
+        if [[ $WAITFORIT_result -eq 0 ]]; then
+            WAITFORIT_end_ts=$(date +%s)
+            echoerr "$WAITFORIT_cmdname: $WAITFORIT_HOST:$WAITFORIT_PORT is available after $((WAITFORIT_end_ts - WAITFORIT_start_ts)) seconds"
+            break
+        fi
+        sleep 1
+    done
+    return $WAITFORIT_result
+}
+
+wait_for_wrapper()
+{
+    if [[ $WAITFORIT_QUIET -eq 1 ]]; then
+        timeout $WAITFORIT_BUSYTIMEFLAG $WAITFORIT_TIMEOUT $0 --quiet --child --host=$WAITFORIT_HOST --port=$WAITFORIT_PORT --timeout=$WAITFORIT_TIMEOUT &
+    else
+        timeout $WAITFORIT_BUSYTIMEFLAG $WAITFORIT_TIMEOUT $0 --child --host=$WAITFORIT_HOST --port=$WAITFORIT_PORT --timeout=$WAITFORIT_TIMEOUT &
+    fi
+    WAITFORIT_PID=$!
+    trap "kill -INT -$WAITFORIT_PID" INT
+    wait $WAITFORIT_PID
+    WAITFORIT_RESULT=$?
+    if [[ $WAITFORIT_RESULT -ne 0 ]]; then
+        echoerr "$WAITFORIT_cmdname: timeout occurred after waiting $WAITFORIT_TIMEOUT seconds for $WAITFORIT_HOST:$WAITFORIT_PORT"
+    fi
+    return $WAITFORIT_RESULT
+}
+
+WAITFORIT_TIMEOUT=${WAITFORIT_TIMEOUT:-15}
+WAITFORIT_STRICT=${WAITFORIT_STRICT:-0}
+WAITFORIT_CHILD=${WAITFORIT_CHILD:-0}
+WAITFORIT_QUIET=${WAITFORIT_QUIET:-0}
+
+if [[ $(which nc) ]]; then
+    WAITFORIT_ISBUSY=1
+else
+    WAITFORIT_ISBUSY=0
+fi
+
+WAITFORIT_BUSYTIMEFLAG=""
+if [[ $(which timeout) ]]; then
+    if timeout --help 2>&1 | grep -q -- '-t '; then
+        WAITFORIT_BUSYTIMEFLAG="-t"
+    fi
+fi
+
+while [[ $# -gt 0 ]]
+do
+    case "$1" in
+        *:* )
+        WAITFORIT_hostport=(${1//:/ })
+        WAITFORIT_HOST=${WAITFORIT_hostport[0]}
+        WAITFORIT_PORT=${WAITFORIT_hostport[1]}
+        shift 1
+        ;;
+        --child)
+        WAITFORIT_CHILD=1
+        shift 1
+        ;;
+        -q | --quiet)
+        WAITFORIT_QUIET=1
+        shift 1
+        ;;
+        -s | --strict)
+        WAITFORIT_STRICT=1
+        shift 1
+        ;;
+        -h)
+        WAITFORIT_HOST="$2"
+        if [[ $WAITFORIT_HOST == "" ]]; then break; fi
+        shift 2
+        ;;
+        --host=*)
+        WAITFORIT_HOST="${1#*=}"
+        shift 1
+        ;;
+        -p)
+        WAITFORIT_PORT="$2"
+        if [[ $WAITFORIT_PORT == "" ]]; then break; fi
+        shift 2
+        ;;
+        --port=*)
+        WAITFORIT_PORT="${1#*=}"
+        shift 1
+        ;;
+        -t)
+        WAITFORIT_TIMEOUT="$2"
+        if [[ $WAITFORIT_TIMEOUT == "" ]]; then break; fi
+        shift 2
+        ;;
+        --timeout=*)
+        WAITFORIT_TIMEOUT="${1#*=}"
+        shift 1
+        ;;
+        --)
+        shift
+        WAITFORIT_CLI=("$@")
+        break
+        ;;
+        --help)
+        usage
+        ;;
+        *)
+        echoerr "Unknown argument: $1"
+        usage
+        ;;
+    esac
+done
+
+if [[ "$WAITFORIT_HOST" == "" || "$WAITFORIT_PORT" == "" ]]; then
+    echoerr "Error: you need to provide a host and port to test."
+    usage
+fi
+
+WAITFORIT_TIMEOUT=${WAITFORIT_TIMEOUT:-15}
+WAITFORIT_STRICT=${WAITFORIT_STRICT:-0}
+WAITFORIT_CHILD=${WAITFORIT_CHILD:-0}
+WAITFORIT_QUIET=${WAITFORIT_QUIET:-0}
+
+if [[ $WAITFORIT_CHILD -gt 0 ]]; then
+    wait_for
+    WAITFORIT_RESULT=$?
+    exit $WAITFORIT_RESULT
+else
+    if [[ $WAITFORIT_TIMEOUT -gt 0 ]]; then
+        wait_for_wrapper
+        WAITFORIT_RESULT=$?
+    else
+        wait_for
+        WAITFORIT_RESULT=$?
+    fi
+fi
+
+if [[ $WAITFORIT_CLI != "" ]]; then
+    if [[ $WAITFORIT_RESULT -ne 0 && $WAITFORIT_STRICT -eq 1 ]]; then
+        echoerr "$WAITFORIT_cmdname: strict mode, refusing to execute subprocess"
+        exit $WAITFORIT_RESULT
+    fi
+    exec "${WAITFORIT_CLI[@]}"
+else
+    exit $WAITFORIT_RESULT
+fi
+WAITFORIT
+
+chmod +x docker/django/wait-for-it.sh
+log_success "wait-for-it script created"
 
 # Stop existing containers
 log_info "Stopping existing containers..."
@@ -311,14 +526,23 @@ $DOCKER_COMPOSE up -d --build
 
 # Wait for services to be ready
 log_info "Waiting for services to start..."
-sleep 15
+sleep 20
 
 # Check if backend is running
 if docker ps | grep -q maghrebit-backend; then
     log_success "Backend container is running"
+    
+    # Test backend health
+    log_info "Testing backend connectivity..."
+    sleep 5
+    if curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:5013/api/ | grep -qE "200|301|302|404"; then
+        log_success "Backend is responding"
+    else
+        log_warning "Backend may still be starting up..."
+    fi
 else
     log_error "Backend container failed to start"
-    docker-compose logs backend
+    $DOCKER_COMPOSE logs backend
     exit 1
 fi
 
@@ -327,7 +551,7 @@ if docker ps | grep -q maghrebit-mysql; then
     log_success "Database container is running"
 else
     log_error "Database container failed to start"
-    docker-compose logs db
+    $DOCKER_COMPOSE logs db
     exit 1
 fi
 
@@ -343,83 +567,13 @@ cd $FRONTEND_DIR
 
 # Update API endpoint in the frontend
 log_info "Updating frontend API configuration..."
-cat > src/helper/endpoint.js << EOF
-// API Base URL Configuration
-export const API_BASE_URL = '${API_BASE_URL}';
 
-// Authentication Endpoints
-export const AUTH_ENDPOINTS = {
-  LOGIN_ESN: \`\${API_BASE_URL}/login_esn/\`,
-  LOGIN_CONSULTANT: \`\${API_BASE_URL}/login_consultant/\`,
-  LOGOUT: \`\${API_BASE_URL}/logout/\`,
-};
-
-// ESN Endpoints
-export const ESN_ENDPOINTS = {
-  LIST: \`\${API_BASE_URL}/ESN/\`,
-  DETAIL: (id) => \`\${API_BASE_URL}/ESN/\${id}\`,
-};
-
-// Collaborateur/Consultant Endpoints
-export const CONSULTANT_ENDPOINTS = {
-  LIST: \`\${API_BASE_URL}/collaborateur/\`,
-  DETAIL: (id) => \`\${API_BASE_URL}/collaborateur/\${id}\`,
-  PROFILE: (id) => \`\${API_BASE_URL}/consultants/\${id}/profile/\`,
-  DASHBOARD: (id) => \`\${API_BASE_URL}/consultants/\${id}/dashboard/\`,
-  PROJECTS: (id) => \`\${API_BASE_URL}/consultant/\${id}/projects/\`,
-  BY_ESN: (esnId) => \`\${API_BASE_URL}/consultants_par_esn/?esn_id=\${esnId}\`,
-};
-
-// Project Endpoints (BDC - Bon de Commande)
-export const PROJECT_ENDPOINTS = {
-  CREATE_BY_ESN: \`\${API_BASE_URL}/esn/create-project/\`,
-  LIST: \`\${API_BASE_URL}/Bondecommande/\`,
-  DETAIL: (id) => \`\${API_BASE_URL}/Bondecommande/\${id}\`,
-  UPDATE_CONSULTANTS: (bdcId) => \`\${API_BASE_URL}/esn/project/\${bdcId}/consultants/\`,
-  MANAGE_CONSULTANTS: (bdcId) => \`\${API_BASE_URL}/esn/project/\${bdcId}/consultants/manage/\`,
-};
-
-// BDC Endpoints (Alias for PROJECT_ENDPOINTS for backward compatibility)
-export const BDC_ENDPOINTS = PROJECT_ENDPOINTS;
-
-// CRA Imputation Endpoints (Daily entries)
-export const CRA_IMPUTATION_ENDPOINTS = {
-  LIST: \`\${API_BASE_URL}/cra_imputation\`,
-  DETAIL: (id) => \`\${API_BASE_URL}/cra_imputation/\${id}/\`,
-  BY_CONSULTANT: (consultantId, period) => 
-    \`\${API_BASE_URL}/cra-by-period/?consultant_id=\${consultantId}&period=\${period}\`,
-  BY_ESN: (esnId, period) => 
-    \`\${API_BASE_URL}/cra-by-esn-period/?esn_id=\${esnId}&period=\${period}\`,
-};
-
-// CRA Consultant Endpoints (Monthly summaries)
-export const CRA_CONSULTANT_ENDPOINTS = {
-  LIST: \`\${API_BASE_URL}/cra_consultant/\`,
-  DETAIL: (id) => \`\${API_BASE_URL}/cra_consultant/\${id}/\`,
-  BY_CONSULTANT: (consultantId, period) => 
-    \`\${API_BASE_URL}/cra-by-consultant-period/?consultant_id=\${consultantId}&period=\${period}\`,
-  BY_PROJECT: (projectId, period) => 
-    \`\${API_BASE_URL}/cra-by-project-period/?project_id=\${projectId}&period=\${period}\`,
-  SUBMIT: (id) => \`\${API_BASE_URL}/cra_consultant/\${id}/submit/\`,
-  VALIDATE: (id) => \`\${API_BASE_URL}/cra_consultant/\${id}/validate/\`,
-};
-
-// Notification Endpoints
-export const NOTIFICATION_ENDPOINTS = {
-  LIST: \`\${API_BASE_URL}/notifications/\`,
-  MARK_READ: (id) => \`\${API_BASE_URL}/notifications/\${id}/mark-read/\`,
-  MARK_ALL_READ: \`\${API_BASE_URL}/notifications/mark-all-read/\`,
-};
-
-// Document Endpoints
-export const DOCUMENT_ENDPOINTS = {
-  UPLOAD: \`\${API_BASE_URL}/documents/upload/\`,
-  LIST: \`\${API_BASE_URL}/documents/\`,
-  DETAIL: (id) => \`\${API_BASE_URL}/documents/\${id}\`,
-};
+# Create .env file for frontend (Vite uses VITE_ prefix)
+cat > .env << EOF
+VITE_API_BASE_URL=${API_BASE_URL}
 EOF
 
-log_success "Frontend API configuration updated"
+log_success "Frontend environment file created"
 
 # Install dependencies
 log_info "Installing frontend dependencies..."
@@ -460,49 +614,83 @@ log_success "Frontend deployed successfully"
 
 log_info "Configuring Nginx..."
 
-# Create Nginx configuration
-sudo tee $NGINX_CONF > /dev/null << 'NGINXCONF'
+# Remove default nginx site if exists
+sudo rm -f /etc/nginx/sites-enabled/default
+
+# Create Nginx configuration for Frontend (waqty.albech.me)
+sudo tee /etc/nginx/sites-available/waqty-frontend > /dev/null << NGINXCONF
 server {
     listen 80;
-    server_name _;
+    server_name ${FRONTEND_DOMAIN};
 
     client_max_body_size 100M;
 
-    # Frontend
     location / {
-        proxy_pass http://localhost:5014;
+        proxy_pass http://127.0.0.1:${FRONTEND_PORT};
         proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-        proxy_cache_bypass $http_upgrade;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Host \$host;
+        proxy_cache_bypass \$http_upgrade;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
     }
 
-    # Backend API
-    location /api/ {
-        proxy_pass http://localhost:5013/api/;
+    # Health check
+    location /health {
+        access_log off;
+        return 200 "healthy\\n";
+        add_header Content-Type text/plain;
+    }
+}
+NGINXCONF
+
+# Create Nginx configuration for Backend API (api-waqty.albech.me)
+sudo tee /etc/nginx/sites-available/waqty-backend > /dev/null << NGINXCONF
+server {
+    listen 80;
+    server_name ${BACKEND_DOMAIN};
+
+    client_max_body_size 100M;
+
+    # CORS configuration
+    set \$cors_origin "";
+    if (\$http_origin ~* "^https://${FRONTEND_DOMAIN}\$") {
+        set \$cors_origin \$http_origin;
+    }
+
+    # Root location - Backend API
+    location / {
+        # Handle CORS preflight requests
+        if (\$request_method = 'OPTIONS') {
+            add_header 'Access-Control-Allow-Origin' \$cors_origin always;
+            add_header 'Access-Control-Allow-Methods' 'GET, POST, PUT, PATCH, DELETE, OPTIONS' always;
+            add_header 'Access-Control-Allow-Headers' 'DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization,X-CSRFToken' always;
+            add_header 'Access-Control-Allow-Credentials' 'true' always;
+            add_header 'Access-Control-Max-Age' 1728000;
+            add_header 'Content-Type' 'text/plain; charset=utf-8';
+            add_header 'Content-Length' 0;
+            return 204;
+        }
+
+        proxy_pass http://127.0.0.1:${BACKEND_PORT};
         proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-Host \$host;
         proxy_connect_timeout 300;
         proxy_send_timeout 300;
         proxy_read_timeout 300;
         send_timeout 300;
-    }
 
-    # Django Admin
-    location /admin/ {
-        proxy_pass http://localhost:5013/admin/;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        # Add CORS headers
+        add_header 'Access-Control-Allow-Origin' \$cors_origin always;
+        add_header 'Access-Control-Allow-Methods' 'GET, POST, PUT, PATCH, DELETE, OPTIONS' always;
+        add_header 'Access-Control-Allow-Headers' 'DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization,X-CSRFToken' always;
+        add_header 'Access-Control-Allow-Credentials' 'true' always;
     }
 
     # Static files
@@ -510,6 +698,7 @@ server {
         alias /home/debian/storage/static/;
         expires 30d;
         add_header Cache-Control "public, immutable";
+        add_header Access-Control-Allow-Origin "*";
     }
 
     # Media files
@@ -517,6 +706,7 @@ server {
         alias /home/debian/storage/media/;
         expires 7d;
         add_header Cache-Control "public";
+        add_header Access-Control-Allow-Origin "*";
     }
 
     # Documents
@@ -524,12 +714,21 @@ server {
         alias /home/debian/storage/documents/;
         expires 7d;
         add_header Cache-Control "public";
+        add_header Access-Control-Allow-Origin "*";
+    }
+
+    # Health check
+    location /health {
+        access_log off;
+        return 200 "healthy\\n";
+        add_header Content-Type text/plain;
     }
 }
 NGINXCONF
 
-# Enable site
-sudo ln -sf $NGINX_CONF $NGINX_ENABLED
+# Enable sites
+sudo ln -sf /etc/nginx/sites-available/waqty-frontend /etc/nginx/sites-enabled/
+sudo ln -sf /etc/nginx/sites-available/waqty-backend /etc/nginx/sites-enabled/
 
 # Test Nginx configuration
 sudo nginx -t
@@ -539,6 +738,40 @@ sudo systemctl reload nginx
 sudo systemctl enable nginx
 
 log_success "Nginx configured successfully"
+
+# =============================================================================
+# SSL Certificate Generation (Let's Encrypt)
+# =============================================================================
+
+log_info "Setting up SSL certificates with Let's Encrypt..."
+
+# Install certbot if not installed
+if ! command -v certbot &> /dev/null; then
+    log_info "Installing Certbot..."
+    sudo apt-get update
+    sudo apt-get install -y certbot python3-certbot-nginx
+fi
+
+# Generate SSL certificates for both domains
+log_info "Generating SSL certificate for ${FRONTEND_DOMAIN}..."
+sudo certbot --nginx -d ${FRONTEND_DOMAIN} --non-interactive --agree-tos --email ${ADMIN_EMAIL} --redirect || {
+    log_warning "Failed to generate SSL for ${FRONTEND_DOMAIN}. Make sure DNS is properly configured."
+}
+
+log_info "Generating SSL certificate for ${BACKEND_DOMAIN}..."
+sudo certbot --nginx -d ${BACKEND_DOMAIN} --non-interactive --agree-tos --email ${ADMIN_EMAIL} --redirect || {
+    log_warning "Failed to generate SSL for ${BACKEND_DOMAIN}. Make sure DNS is properly configured."
+}
+
+# Setup automatic renewal
+log_info "Setting up automatic SSL renewal..."
+sudo systemctl enable certbot.timer
+sudo systemctl start certbot.timer
+
+# Test renewal
+sudo certbot renew --dry-run || log_warning "SSL renewal test failed"
+
+log_success "SSL certificates configured successfully"
 
 # =============================================================================
 # Firewall Configuration
@@ -575,6 +808,51 @@ chmod +x $BACKEND_DIR/create_superuser.sh
 
 log_success "Created superuser script at $BACKEND_DIR/create_superuser.sh"
 
+# Create debug/troubleshoot script
+cat > $BACKEND_DIR/debug.sh << DEBUGSCRIPT
+#!/bin/bash
+echo "=== Docker Container Status ==="
+docker ps -a
+
+echo ""
+echo "=== Backend Logs (last 50 lines) ==="
+docker logs maghrebit-backend --tail 50
+
+echo ""
+echo "=== Database Logs (last 20 lines) ==="
+docker logs maghrebit-mysql --tail 20
+
+echo ""
+echo "=== Testing Backend Connectivity (local) ==="
+curl -v http://127.0.0.1:${BACKEND_PORT}/health/ 2>&1 | head -30
+
+echo ""
+echo "=== Testing via Domain (${BACKEND_DOMAIN}) ==="
+curl -v https://${BACKEND_DOMAIN}/health 2>&1 | head -30
+
+echo ""
+echo "=== Testing Frontend Domain (${FRONTEND_DOMAIN}) ==="
+curl -v https://${FRONTEND_DOMAIN}/health 2>&1 | head -30
+
+echo ""
+echo "=== Nginx Status ==="
+sudo systemctl status nginx --no-pager | head -15
+
+echo ""
+echo "=== PM2 Status ==="
+pm2 list
+
+echo ""
+echo "=== SSL Certificate Status ==="
+sudo certbot certificates
+
+echo ""
+echo "=== Environment Variables in Backend ==="
+docker exec maghrebit-backend env | grep -E "CORS|ALLOWED|DEBUG|DB_|CSRF"
+DEBUGSCRIPT
+chmod +x $BACKEND_DIR/debug.sh
+log_success "Created debug script at $BACKEND_DIR/debug.sh"
+
 # =============================================================================
 # Status Check
 # =============================================================================
@@ -606,14 +884,18 @@ echo "======================================"
 echo "  Deployment Summary"
 echo "======================================"
 echo ""
-log_success "Frontend URL: http://localhost or http://YOUR_VPS_IP"
-log_info "  - Frontend runs on port $FRONTEND_PORT (proxied via Nginx on port 80)"
-log_success "Backend API: http://localhost/api or http://YOUR_VPS_IP/api"
-log_info "  - Backend runs on port $BACKEND_PORT (proxied via Nginx on port 80)"
-log_success "Django Admin: http://localhost/admin or http://YOUR_VPS_IP/admin"
+log_success "Frontend URL: https://$FRONTEND_DOMAIN"
+log_info "  - Frontend runs on port $FRONTEND_PORT (proxied via Nginx with SSL)"
+log_success "Backend API: https://$BACKEND_DOMAIN/api"
+log_info "  - Backend runs on port $BACKEND_PORT (proxied via Nginx with SSL)"
+log_success "Django Admin: https://$BACKEND_DOMAIN/admin/"
+echo ""
+log_info "Domain Configuration:"
+log_info "  - Frontend: $FRONTEND_DOMAIN"
+log_info "  - Backend API: $BACKEND_DOMAIN"
 echo ""
 log_info "Internal Ports:"
-log_info "  - Nginx: 80 (public access point)"
+log_info "  - Nginx: 80/443 (public access point)"
 log_info "  - Frontend (PM2): $FRONTEND_PORT"
 log_info "  - Backend (Docker): $BACKEND_PORT"
 log_info "  - MySQL (Docker): 3307 (host) -> 3306 (container)"
@@ -630,11 +912,20 @@ log_info "  - Nginx: sudo tail -f /var/log/nginx/access.log"
 echo ""
 log_info "Management Commands:"
 log_info "  - Create superuser: cd $BACKEND_DIR && ./create_superuser.sh"
+log_info "  - Debug/troubleshoot: cd $BACKEND_DIR && ./debug.sh"
 log_info "  - Restart backend: cd $BACKEND_DIR && docker compose restart backend"
 log_info "  - Restart frontend: pm2 restart mci-mini"
 log_info "  - Restart all: cd $BACKEND_DIR && docker compose restart && pm2 restart all"
+log_info "  - Renew SSL: sudo certbot renew"
 echo ""
-log_warning "IMPORTANT: Update ALLOWED_HOSTS in .env with your domain/IP!"
+log_info "Health Check URLs:"
+log_info "  - Backend: curl https://$BACKEND_DOMAIN/health"
+log_info "  - Frontend: curl https://$FRONTEND_DOMAIN/health"
+echo ""
+log_success "SSL Certificates installed for:"
+log_info "  - $FRONTEND_DOMAIN"
+log_info "  - $BACKEND_DOMAIN"
+echo ""
 log_warning "IMPORTANT: Change default database passwords in production!"
 echo ""
 log_success "Deployment completed successfully! 🎉"

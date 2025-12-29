@@ -1,5 +1,17 @@
 // API Base URL Configuration
-export const API_BASE_URL = 'http://localhost:8000/api';
+// In production, use the dedicated API domain with HTTPS
+// In development, use environment variable or default
+const getApiBaseUrl = () => {
+  // Check if we're in production
+  if (import.meta.env.PROD) {
+    // Use the dedicated API domain in production
+    return import.meta.env.VITE_API_BASE_URL || 'https://api-waqty.albech.me/api';
+  }
+  // Development: use environment variable or default
+  return import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
+};
+
+export const API_BASE_URL = getApiBaseUrl();
 
 // Authentication Endpoints
 export const AUTH_ENDPOINTS = {
