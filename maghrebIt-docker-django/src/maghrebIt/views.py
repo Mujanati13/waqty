@@ -1108,6 +1108,16 @@ def collaborateur_view(request, id=0):
         col = Collaborateur.objects.get(ID_collab=col_data["ID_collab"])
         # Récupère le collaborateur à mettre à jour en fonction de l'ID_collab fourni.
 
+        # Preserve existing password if not provided in update
+        if 'password' not in col_data or not col_data.get('password'):
+            col_data['password'] = col.password
+        else:
+            # Hash the new password if provided
+            password = col_data.get("password")
+            pwd_utf = password.encode()
+            pwd_sh = hashlib.sha1(pwd_utf)
+            col_data['password'] = pwd_sh.hexdigest()
+
         col_serializer = CollaborateurSerializer(col, data=col_data)
         # Sérialise les données mises à jour pour les valider.
 

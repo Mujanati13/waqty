@@ -813,40 +813,6 @@ sudo systemctl enable nginx
 log_success "Nginx configured successfully"
 
 # =============================================================================
-# SSL Certificate Generation (Let's Encrypt)
-# =============================================================================
-
-log_info "Setting up SSL certificates with Let's Encrypt..."
-
-# Install certbot if not installed
-if ! command -v certbot &> /dev/null; then
-    log_info "Installing Certbot..."
-    sudo apt-get update
-    sudo apt-get install -y certbot python3-certbot-nginx
-fi
-
-# Generate SSL certificates for both domains
-log_info "Generating SSL certificate for ${FRONTEND_DOMAIN}..."
-sudo certbot --nginx -d ${FRONTEND_DOMAIN} --non-interactive --agree-tos --email ${ADMIN_EMAIL} --redirect || {
-    log_warning "Failed to generate SSL for ${FRONTEND_DOMAIN}. Make sure DNS is properly configured."
-}
-
-log_info "Generating SSL certificate for ${BACKEND_DOMAIN}..."
-sudo certbot --nginx -d ${BACKEND_DOMAIN} --non-interactive --agree-tos --email ${ADMIN_EMAIL} --redirect || {
-    log_warning "Failed to generate SSL for ${BACKEND_DOMAIN}. Make sure DNS is properly configured."
-}
-
-# Setup automatic renewal
-log_info "Setting up automatic SSL renewal..."
-sudo systemctl enable certbot.timer
-sudo systemctl start certbot.timer
-
-# Test renewal
-sudo certbot renew --dry-run || log_warning "SSL renewal test failed"
-
-log_success "SSL certificates configured successfully"
-
-# =============================================================================
 # Firewall Configuration
 # =============================================================================
 
@@ -958,9 +924,9 @@ echo "  Deployment Summary"
 echo "======================================"
 echo ""
 log_success "Frontend URL: https://$FRONTEND_DOMAIN"
-log_info "  - Frontend runs on port $FRONTEND_PORT (proxied via Nginx with SSL)"
+log_info "  - Frontend runs on port $FRONTEND_PORT (proxied via Nginx)"
 log_success "Backend API: https://$BACKEND_DOMAIN/api"
-log_info "  - Backend runs on port $BACKEND_PORT (proxied via Nginx with SSL)"
+log_info "  - Backend runs on port $BACKEND_PORT (proxied via Nginx)"
 log_success "Django Admin: https://$BACKEND_DOMAIN/admin/"
 echo ""
 log_info "Domain Configuration:"
@@ -989,17 +955,13 @@ log_info "  - Debug/troubleshoot: cd $BACKEND_DIR && ./debug.sh"
 log_info "  - Restart backend: cd $BACKEND_DIR && docker compose restart backend"
 log_info "  - Restart frontend: pm2 restart mci-mini"
 log_info "  - Restart all: cd $BACKEND_DIR && docker compose restart && pm2 restart all"
-log_info "  - Renew SSL: sudo certbot renew"
 echo ""
 log_info "Health Check URLs:"
-log_info "  - Backend: curl https://$BACKEND_DOMAIN/health"
-log_info "  - Frontend: curl https://$FRONTEND_DOMAIN/health"
-echo ""
-log_success "SSL Certificates installed for:"
-log_info "  - $FRONTEND_DOMAIN"
-log_info "  - $BACKEND_DOMAIN"
+log_info "  - Backend: curl http://$BACKEND_DOMAIN/health (or https:// if SSL configured manually)"
+log_info "  - Frontend: curl http://$FRONTEND_DOMAIN/health (or https:// if SSL configured manually)"
 echo ""
 log_warning "IMPORTANT: Change default database passwords in production!"
+log_info "NOTE: SSL certificates not auto-configured. Configure manually if needed."
 echo ""
 log_success "Deployment completed successfully! 🎉"
 echo ""

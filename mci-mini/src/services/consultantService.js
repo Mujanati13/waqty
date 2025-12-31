@@ -76,13 +76,17 @@ export const createConsultant = async (consultantData) => {
 // Update consultant
 export const updateConsultant = async (id, consultantData) => {
   try {
-    const response = await api.put(CONSULTANT_ENDPOINTS.DETAIL(id), consultantData);
+    // Django API expects PUT to /collaborateur/ with ID_collab in the body
+    const response = await api.put(CONSULTANT_ENDPOINTS.LIST, {
+      ...consultantData,
+      ID_collab: id,
+    });
     return { success: true, data: response.data };
   } catch (error) {
     console.error('Update consultant error:', error);
     return { 
       success: false, 
-      error: error.response?.data?.error || error.message 
+      error: error.response?.data?.error || error.response?.data?.msg || error.message 
     };
   }
 };

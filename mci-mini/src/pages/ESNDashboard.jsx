@@ -137,15 +137,18 @@ const ESNDashboard = () => {
 
   const handleEditConsultant = (consultant) => {
     setEditingConsultant(consultant);
+    form.resetFields(); // Reset form before populating
     const dateValue = consultant.Date_naissance || consultant.date_naissance;
     const formValues = {
-      Nom: consultant.Nom || consultant.nom,
-      Prenom: consultant.Prenom || consultant.prenom,
-      email: consultant.email,
-      Poste: consultant.Poste,
+      Nom: consultant.Nom || consultant.nom || '',
+      Prenom: consultant.Prenom || consultant.prenom || '',
+      email: consultant.email || consultant.Email || '',
+      Poste: consultant.Poste || consultant.poste || '',
       Date_naissance: dateValue ? dayjs(dateValue, 'YYYY-MM-DD') : null,
-      LinkedIN: consultant.LinkedIN || consultant.linkedin,
+      LinkedIN: consultant.LinkedIN || consultant.linkedin || consultant.Linkedin || '',
     };
+    console.log('📝 Editing consultant:', consultant);
+    console.log('📝 Form values:', formValues);
     form.setFieldsValue(formValues);
     setModalVisible(true);
   };
@@ -208,7 +211,7 @@ const ESNDashboard = () => {
     const consultantData = {
       ...values,
       ID_ESN: parseInt(esnId),
-      Date_naissance: values.Date_naissance?.format('YYYY-MM-DD'),
+      Date_naissance: values.Date_naissance?.format('YYYY-MM-DD') || null,
       Consultant: true,
       Commercial: false,
       Admin: false,
@@ -220,6 +223,9 @@ const ESNDashboard = () => {
       consultantData.ID_collab = editingConsultant.ID_collab;
     }
 
+    console.log('📤 Submitting consultant data:', consultantData);
+    console.log('📤 Is editing:', !!editingConsultant);
+
     let result;
     if (editingConsultant) {
       result = await updateConsultant(editingConsultant.ID_collab, consultantData);
@@ -227,9 +233,13 @@ const ESNDashboard = () => {
       result = await createConsultant(consultantData);
     }
 
+    console.log('📥 API result:', result);
+
     if (result.success) {
       message.success(editingConsultant ? 'Consultant mis à jour' : 'Consultant créé');
       setModalVisible(false);
+      setEditingConsultant(null);
+      form.resetFields();
       loadData();
     } else {
       message.error(result.error || 'Erreur lors de la sauvegarde');
@@ -1385,7 +1395,11 @@ const ESNDashboard = () => {
       <Modal
         title={editingConsultant ? 'Modifier le consultant' : 'Ajouter un consultant'}
         open={modalVisible}
-        onCancel={() => setModalVisible(false)}
+        onCancel={() => {
+          setModalVisible(false);
+          setEditingConsultant(null);
+          form.resetFields();
+        }}
         footer={null}
         width={600}
       >
@@ -1463,7 +1477,11 @@ const ESNDashboard = () => {
 
           <Form.Item style={{ marginBottom: 0, textAlign: 'right' }}>
             <Space>
-              <Button onClick={() => setModalVisible(false)}>Annuler</Button>
+              <Button onClick={() => {
+                setModalVisible(false);
+                setEditingConsultant(null);
+                form.resetFields();
+              }}>Annuler</Button>
               <Button type="primary" htmlType="submit">
                 {editingConsultant ? 'Mettre à jour' : 'Créer'}
               </Button>
