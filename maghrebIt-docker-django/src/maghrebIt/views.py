@@ -2082,6 +2082,9 @@ def Bondecommande_view(request, id=0):
                 # Ajouter le titre du projet aux données du BDC
                 bdc_data['project_title'] = appel_offre.titre
                 
+                # Add project status from AppelOffre (this is the work status set by ESN)
+                bdc_data['status'] = appel_offre.statut
+                
                 # Ajouter d'autres informations utiles
                 try:
                     # Informations client
@@ -15358,7 +15361,7 @@ def esn_update_project_consultants(request, bdc_id):
                 appel_offre.jours = int(data['jours'])
             if 'status' in data:
                 bdc.statut = data['status']
-                appel_offre.status = data['status']
+                appel_offre.statut = data['status']  # Fixed: use 'statut' not 'status'
             
             # Recalculate montant_total if tjm or jours changed
             if 'tjm' in data or 'jours' in data:

@@ -188,12 +188,24 @@ export const getBDCsByConsultant = async (consultantId, period) => {
               client_name: project.client_name,
               client_id: project.client_id,
               esn_id: esnId,
-              esn_name: esnName
+              esn_name: esnName,
+              // Include project status for filtering (bdc.statut should already be there from spread)
+              status: bdc.statut || project.statut
             });
           });
         } else {
           // If no BDCs, create a pseudo-BDC from project data
           const candidature = candidatures[0] || {};
+          const date_debut = candidature.date_disponibilite || project.date_debut;
+          let date_fin = null;
+          
+          // Calculate date_fin from date_debut + jours if available
+          if (date_debut && project.jours) {
+            const startDate = new Date(date_debut);
+            startDate.setDate(startDate.getDate() + parseInt(project.jours));
+            date_fin = startDate.toISOString().split('T')[0];
+          }
+          
           bdcs.push({
             id_bdc: project.id,
             has_real_bdc: false,
@@ -203,11 +215,12 @@ export const getBDCsByConsultant = async (consultantId, period) => {
             esn_id: esnId,
             esn_name: esnName,
             TJM: candidature.tjm,
-            date_debut: candidature.date_disponibilite || project.date_debut,
-            date_fin: null,
+            date_debut: date_debut,
+            date_fin: date_fin,
             jours: project.jours,
             numero_bdc: `AO-${project.id}`,
-            statut: candidature.statut
+            statut: project.statut,  // Use project status (set by ESN), not candidature status
+            status: project.statut   // Also add as 'status' for compatibility
           });
         }
       });
@@ -236,7 +249,7 @@ export const getAllProjectsByConsultant = async (consultantId) => {
         const bdc = project.bdc;
         const candidature = project.candidature;
         
-        console.log('Processing project:', project.titre, 'BDC:', bdc, 'Candidature:', candidature);
+        console.log('Processing project:', project.titre, 'BDC:', bdc, 'BDC statut:', bdc?.statut, 'Candidature:', candidature);
         
         // Track if this is a real BDC or just a project reference
         const hasRealBdc = !!bdc?.id_bdc;
@@ -253,9 +266,9 @@ export const getAllProjectsByConsultant = async (consultantId) => {
           date_fin = startDate.toISOString().split('T')[0];
         }
         
-        // Get status: try bdc.status, bdc.statut, project.status, or candidature.statut
-        const projectStatus = bdc?.status || bdc?.statut || project.status || project.statut || candidature?.statut || 'En cours';
-        console.log('Project status resolved to:', projectStatus);
+        // Get status: try bdc.statut first (where ESN stores it), then other fields
+        const projectStatus = bdc?.statut || bdc?.status || project.status || project.statut || candidature?.statut || 'En cours';
+        console.log('Project status resolved to:', projectStatus, 'from bdc.statut:', bdc?.statut);
         
         projects.push({
           id_bdc: bdc?.id_bdc || project.id,

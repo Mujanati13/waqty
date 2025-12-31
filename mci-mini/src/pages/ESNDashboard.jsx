@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { 
   Layout, Card, Row, Col, Statistic, Table, Button, 
   Tag, Space, Typography, Modal, Form, Input, DatePicker,
-  message, Popconfirm, Select, Tabs, InputNumber
+  message, Popconfirm, Select, Tabs, InputNumber, Progress, Tooltip
 } from 'antd';
 import { 
   UserOutlined, ProjectOutlined, FileTextOutlined, 
@@ -44,6 +44,8 @@ const ESNDashboard = () => {
   const [activityFilterProject, setActivityFilterProject] = useState(null);
   const [activityFilterStatus, setActivityFilterStatus] = useState(null);
   const [activityFilterType, setActivityFilterType] = useState(null);
+  const [projectFilterStatus, setProjectFilterStatus] = useState(null);
+  const [projectFilterDateRange, setProjectFilterDateRange] = useState(null);
   const [form] = Form.useForm();
   const [projectForm] = Form.useForm();
   const [editProjectForm] = Form.useForm();
@@ -367,6 +369,33 @@ const ESNDashboard = () => {
     }
   };
 
+  const handleChangeProjectStatus = async (project, newStatus) => {
+    try {
+      const updateData = {
+        esn_id: esnId,
+        project_title: project.project_title,
+        description: project.description || '',
+        tjm: project.tjm,
+        date_debut: project.date_debut,
+        date_fin: project.date_fin,
+        jours: project.jours,
+        status: newStatus,
+      };
+
+      const result = await updateProjectConsultants(project.id_bdc, updateData);
+
+      if (result.success) {
+        message.success(`Statut changé en "${newStatus}"`);
+        loadData();
+      } else {
+        message.error(result.error || 'Erreur lors du changement de statut');
+      }
+    } catch (error) {
+      console.error('Error changing project status:', error);
+      message.error('Erreur lors du changement de statut');
+    }
+  };
+
   const getStatusColor = (status) => {
     switch (status) {
       case CRA_STATUS.DRAFT: return 'default';
@@ -571,6 +600,35 @@ const ESNDashboard = () => {
       render: (val) => val ? `${val} €` : '-',
     },
     {
+      title: 'Statut',
+      dataIndex: 'status',
+      key: 'status',
+      render: (status, record) => {
+        const currentStatus = status || 'En cours';
+        return (
+          <Select
+            value={currentStatus}
+            style={{ width: 120 }}
+            size="small"
+            onChange={(newStatus) => handleChangeProjectStatus(record, newStatus)}
+          >
+            <Select.Option value="En cours">
+              <Tag color="blue">En cours</Tag>
+            </Select.Option>
+            <Select.Option value="Terminé">
+              <Tag color="green">Terminé</Tag>
+            </Select.Option>
+            <Select.Option value="En pause">
+              <Tag color="orange">En pause</Tag>
+            </Select.Option>
+            <Select.Option value="Annulé">
+              <Tag color="red">Annulé</Tag>
+            </Select.Option>
+          </Select>
+        );
+      },
+    },
+    {
       title: 'Actions',
       key: 'actions',
       render: (_, record) => (
@@ -586,6 +644,39 @@ const ESNDashboard = () => {
       ),
     },
   ];
+
+  // Filter projects based on status and date range
+  const filteredProjects = projects.filter(project => {
+    // Filter by status
+    if (projectFilterStatus) {
+      const projectStatus = project.status || 'En cours';
+      if (projectStatus !== projectFilterStatus) return false;
+    }
+    
+    // Filter by date range
+    if (projectFilterDateRange && projectFilterDateRange.length === 2) {
+      const [startFilter, endFilter] = projectFilterDateRange;
+      const projectStart = project.date_debut ? dayjs(project.date_debut) : null;
+      const projectEnd = project.date_fin ? dayjs(project.date_fin) : null;
+      
+      // Project should overlap with the filter range
+      if (projectStart && projectEnd) {
+        const filterStart = dayjs(startFilter);
+        const filterEnd = dayjs(endFilter);
+        // Check if project dates overlap with filter dates
+        if (projectEnd.isBefore(filterStart) || projectStart.isAfter(filterEnd)) {
+          return false;
+        }
+      }
+    }
+    
+    return true;
+  }).sort((a, b) => {
+    // Sort by most recent date_debut (descending order)
+    const dateA = a.date_debut ? dayjs(a.date_debut) : dayjs(0);
+    const dateB = b.date_debut ? dayjs(b.date_debut) : dayjs(0);
+    return dateB.valueOf() - dateA.valueOf();
+  });
 
   const pendingCras = Array.isArray(cras) ? cras.filter(c => c.statut === CRA_STATUS.SUBMITTED) : [];
   const validatedCras = Array.isArray(cras) ? cras.filter(c => c.statut === CRA_STATUS.VALIDATED || c.statut === CRA_STATUS.ESN_VALIDATED) : [];
@@ -1252,15 +1343,56 @@ const ESNDashboard = () => {
       ),
       children: (
         <Card>
-          <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between' }}>
+          <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <Title level={5} style={{ margin: 0 }}>Liste des Projets</Title>
             <Button type="primary" icon={<PlusOutlined />} onClick={handleCreateProject}>
               Créer un projet
             </Button>
           </div>
+          
+          {/* Filters */}
+          <div style={{ marginBottom: 16, padding: '12px 16px', background: '#fafafa', borderRadius: 8 }}>
+            <Space wrap>
+              <span style={{ fontWeight: 500 }}>Filtres:</span>
+              <Select
+                placeholder="Statut"
+                allowClear
+                style={{ width: 150 }}
+                value={projectFilterStatus}
+                onChange={setProjectFilterStatus}
+              >
+                <Select.Option value="En cours">En cours</Select.Option>
+                <Select.Option value="Terminé">Terminé</Select.Option>
+                <Select.Option value="En pause">En pause</Select.Option>
+                <Select.Option value="Annulé">Annulé</Select.Option>
+              </Select>
+              <DatePicker.RangePicker
+                placeholder={['Date début', 'Date fin']}
+                format="DD/MM/YYYY"
+                value={projectFilterDateRange}
+                onChange={setProjectFilterDateRange}
+                style={{ width: 280 }}
+              />
+              {(projectFilterStatus || projectFilterDateRange) && (
+                <Button 
+                  type="link" 
+                  onClick={() => {
+                    setProjectFilterStatus(null);
+                    setProjectFilterDateRange(null);
+                  }}
+                >
+                  Réinitialiser
+                </Button>
+              )}
+              <span style={{ color: '#888', marginLeft: 8 }}>
+                {filteredProjects.length} projet(s) affiché(s)
+              </span>
+            </Space>
+          </div>
+          
           <Table
             columns={projectColumns}
-            dataSource={projects}
+            dataSource={filteredProjects}
             rowKey="id_bdc"
             loading={loading}
             pagination={{ pageSize: 10 }}
@@ -1640,6 +1772,8 @@ const ESNDashboard = () => {
             <Select placeholder="Sélectionner un statut">
               <Select.Option value="En cours">En cours</Select.Option>
               <Select.Option value="Terminé">Terminé</Select.Option>
+              <Select.Option value="En pause">En pause</Select.Option>
+              <Select.Option value="Annulé">Annulé</Select.Option>
             </Select>
           </Form.Item>
 
@@ -2009,13 +2143,6 @@ const ESNDashboard = () => {
                         const absenceTypes = ['Congé', 'Formation', 'Maladie', 'Absence', 'CP', 'RTT', 'Autre', 'absence'];
                         const projectTitle = record.project_title || record.titre || '';
                         
-                        // Debug: log CRA structure
-                        if (index === 0 && consultantCras.length > 0) {
-                          console.log('🔍 Debug Jours consommés - First CRA:', consultantCras[0]);
-                          console.log('🔍 Debug Jours consommés - Project record:', record);
-                          console.log('🔍 Debug Jours consommés - All CRAs:', consultantCras);
-                        }
-                        
                         const projectCras = consultantCras.filter(cra => {
                           const isValidOrPending = ['EVP', 'Validé', 'VE', 'VC'].includes(cra.statut);
                           if (!isValidOrPending) return false;
@@ -2052,8 +2179,39 @@ const ESNDashboard = () => {
                           return sum + parseFloat(cra.Durée || cra.duree || cra.duration || 0);
                         }, 0);
                         
-                        if (totalDays === 0) return '0 j';
-                        return totalDays % 1 === 0 ? `${totalDays} j` : `${totalDays.toFixed(2)} j`;
+                        // Get allocated days from record (jours field)
+                        const allocatedDays = parseFloat(record.jours || 0);
+                        
+                        // Calculate percentage
+                        const percentage = allocatedDays > 0 ? (totalDays / allocatedDays) * 100 : 0;
+                        
+                        // Determine color based on percentage
+                        let color = '#d9d9d9'; // default gray
+                        if (percentage >= 100) {
+                          color = '#52c41a'; // green - fully consumed or exceeded
+                        } else if (percentage >= 75) {
+                          color = '#1890ff'; // blue - mostly consumed
+                        } else if (percentage >= 50) {
+                          color = '#faad14'; // orange - half consumed
+                        }
+                        
+                        return (
+                          <Tooltip title={`${totalDays.toFixed(1)} / ${allocatedDays} jours`}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <Progress 
+                                percent={Math.min(percentage, 100)} 
+                                strokeColor={color}
+                                size="small"
+                                style={{ width: '50px', minWidth: '50px' }}
+                                strokeWidth={6}
+                                showInfo={false}
+                              />
+                              <span style={{ color, fontWeight: '500' }}>
+                                {percentage.toFixed(0)}%
+                              </span>
+                            </div>
+                          </Tooltip>
+                        );
                       },
                     },
                     {

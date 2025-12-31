@@ -72,10 +72,6 @@ const ConsultantCRA = () => {
     fetchHolidays(selectedMonth);
   }, [selectedMonth]);
 
-  useEffect(() => {
-    fetchAllProjects();
-  }, []);
-
   // Fetch holidays from Nager.Date API
   const fetchHolidays = async (date) => {
     try {
@@ -156,19 +152,75 @@ const ConsultantCRA = () => {
     try {
       const period = date.format('MM_YYYY');
 
+      // First refresh allProjects to get latest status
+      const allProjectsResult = await getAllProjectsByConsultant(consultantId);
+      let latestProjects = [];
+      if (allProjectsResult.success) {
+        latestProjects = allProjectsResult.data || [];
+        setAllProjects(latestProjects);
+        console.log('Refreshed allProjects:', latestProjects);
+      }
+
       // Fetch BDCs for this period
       const bdcsResult = await getBDCsByConsultant(consultantId, period);
       console.log('BDCs result:', bdcsResult);
 
       if (bdcsResult.success && bdcsResult.data) {
         const bdcsList = Array.isArray(bdcsResult.data) ? bdcsResult.data : [bdcsResult.data];
-        setProjects(bdcsList);
+        
+        // Filter out inactive projects (En pause, Terminé, Annulé) from CRA view
+        const inactiveStatuses = ['Terminé', 'En pause', 'Annulé'];
+        
+        // Get the first and last day of the selected month for period filtering
+        const monthStart = date.startOf('month');
+        const monthEnd = date.endOf('month');
+        
+        const activeBdcsList = bdcsList.filter(bdc => {
+          // First check in the bdc itself
+          let status = bdc.status || bdc.statut;
+          
+          // If no status in bdc, look it up in latestProjects (freshly fetched)
+          if (!status) {
+            const matchingProject = latestProjects.find(p => 
+              String(p.id_bdc) === String(bdc.id_bdc)
+            );
+            status = matchingProject?.status || matchingProject?.statut;
+          }
+          
+          // Default to 'En cours' only if still no status
+          if (!status) {
+            status = 'En cours';
+          }
+          
+          // Check if project status is active
+          const isActiveStatus = !inactiveStatuses.includes(status);
+          
+          // Check if project period overlaps with selected month
+          const projectStart = bdc.date_debut ? dayjs(bdc.date_debut) : null;
+          const projectEnd = bdc.date_fin ? dayjs(bdc.date_fin) : null;
+          
+          let isInPeriod = true;
+          if (projectStart && projectStart.isAfter(monthEnd, 'day')) {
+            // Project starts after this month ends
+            isInPeriod = false;
+          }
+          if (projectEnd && projectEnd.isBefore(monthStart, 'day')) {
+            // Project ended before this month starts
+            isInPeriod = false;
+          }
+          
+          console.log(`Project ${bdc.project_title} (id: ${bdc.id_bdc}) - Status: "${status}" - Active: ${isActiveStatus} - InPeriod: ${isInPeriod} (${projectStart?.format('YYYY-MM-DD')} to ${projectEnd?.format('YYYY-MM-DD')})`);
+          return isActiveStatus && isInPeriod;
+        });
+        
+        console.log(`Filtered projects: ${activeBdcsList.length} active out of ${bdcsList.length} total`);
+        setProjects(activeBdcsList);
 
         // Build lookup objects - normalize IDs to strings for consistent matching
         const projectsMap = {};
         const clientsMap = {};
 
-        bdcsList.forEach(bdc => {
+        activeBdcsList.forEach(bdc => {
           // Normalize id_bdc to string for consistent key lookup
           const normalizedBdcId = normalizeId(bdc.id_bdc);
           projectsMap[normalizedBdcId] = { ...bdc, id_bdc: normalizedBdcId };
@@ -359,6 +411,36 @@ const ConsultantCRA = () => {
         return;
       }
 
+      // Validate project period for work entries
+      if (isWork) {
+        const bdcId = values.id_bdc || craForm.getFieldValue('id_bdc');
+        if (bdcId) {
+          const normalizedBdcId = normalizeId(bdcId);
+          const project = projectsById[normalizedBdcId];
+          console.log('Period validation - bdcId:', bdcId, 'normalized:', normalizedBdcId, 'project:', project);
+          if (project) {
+            const currentDate = selectedMonth.date(dayToCheck);
+            const dateDebut = project.date_debut ? dayjs(project.date_debut) : null;
+            const dateFin = project.date_fin ? dayjs(project.date_fin) : null;
+            
+            console.log('Period validation - currentDate:', currentDate.format('YYYY-MM-DD'), 
+                        'dateDebut:', dateDebut?.format('YYYY-MM-DD'), 
+                        'dateFin:', dateFin?.format('YYYY-MM-DD'));
+            
+            if (dateDebut && currentDate.isBefore(dateDebut, 'day')) {
+              message.error(`La date sélectionnée (${currentDate.format('DD/MM/YYYY')}) est avant le début du projet (${dateDebut.format('DD/MM/YYYY')})`);
+              setSubmitting(false);
+              return;
+            }
+            if (dateFin && currentDate.isAfter(dateFin, 'day')) {
+              message.error(`La date sélectionnée (${currentDate.format('DD/MM/YYYY')}) est après la fin du projet (${dateFin.format('DD/MM/YYYY')})`);
+              setSubmitting(false);
+              return;
+            }
+          }
+        }
+      }
+
       // Build base data
       const entryData = {
         id_consultan: consultantId,
@@ -418,6 +500,35 @@ const ConsultantCRA = () => {
 
     setSubmitting(true);
     try {
+      const isWork = values.type_imputation === 'Jour Travaillé';
+      
+      // Validate project period for work entries
+      if (isWork && values.id_bdc) {
+        const normalizedBdcId = normalizeId(values.id_bdc);
+        const project = projectsById[normalizedBdcId];
+        console.log('Update period validation - bdcId:', values.id_bdc, 'normalized:', normalizedBdcId, 'project:', project);
+        if (project) {
+          const currentDate = selectedMonth.date(selectedDay);
+          const dateDebut = project.date_debut ? dayjs(project.date_debut) : null;
+          const dateFin = project.date_fin ? dayjs(project.date_fin) : null;
+          
+          console.log('Update period validation - currentDate:', currentDate.format('YYYY-MM-DD'), 
+                      'dateDebut:', dateDebut?.format('YYYY-MM-DD'), 
+                      'dateFin:', dateFin?.format('YYYY-MM-DD'));
+          
+          if (dateDebut && currentDate.isBefore(dateDebut, 'day')) {
+            message.error(`La date sélectionnée (${currentDate.format('DD/MM/YYYY')}) est avant le début du projet (${dateDebut.format('DD/MM/YYYY')})`);
+            setSubmitting(false);
+            return;
+          }
+          if (dateFin && currentDate.isAfter(dateFin, 'day')) {
+            message.error(`La date sélectionnée (${currentDate.format('DD/MM/YYYY')}) est après la fin du projet (${dateFin.format('DD/MM/YYYY')})`);
+            setSubmitting(false);
+            return;
+          }
+        }
+      }
+
       const updatedData = {
         ...selectedCraEntry,
         id_client: values.id_client,
@@ -425,7 +536,7 @@ const ConsultantCRA = () => {
         type_imputation: values.type_imputation,
         Durée: values.Durée,
         commentaire: values.commentaire || '',
-        type: values.type_imputation === 'Jour Travaillé' ? 'travail' : 'absence'
+        type: isWork ? 'travail' : 'absence'
       };
 
       const result = await updateImputation(selectedCraEntry.id_imputation, updatedData);
