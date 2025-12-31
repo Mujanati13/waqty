@@ -8,7 +8,7 @@ import {
   UserOutlined, ProjectOutlined, FileTextOutlined, 
   PlusOutlined, EditOutlined, DeleteOutlined,
   CheckCircleOutlined, ClockCircleOutlined, LogoutOutlined,
-  EyeOutlined, BarChartOutlined, CalendarOutlined
+  EyeOutlined, BarChartOutlined, CalendarOutlined, ReloadOutlined
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { getEsnId, getUserName } from '../helper/auth';
@@ -41,6 +41,9 @@ const ESNDashboard = () => {
   const [consultantActivityLoading, setConsultantActivityLoading] = useState(false);
   const [consultantProjects, setConsultantProjects] = useState([]);
   const [consultantCras, setConsultantCras] = useState([]);
+  const [activityFilterProject, setActivityFilterProject] = useState(null);
+  const [activityFilterStatus, setActivityFilterStatus] = useState(null);
+  const [activityFilterType, setActivityFilterType] = useState(null);
   const [form] = Form.useForm();
   const [projectForm] = Form.useForm();
   const [editProjectForm] = Form.useForm();
@@ -119,7 +122,7 @@ const ESNDashboard = () => {
       }
     } catch (error) {
       console.error('Error loading data:', error);
-      message.error('Erreur lors du chargement des données');
+      // message.error('Erreur lors du chargement des données');
     } finally {
       setLoading(false);
     }
@@ -194,7 +197,7 @@ const ESNDashboard = () => {
       
       setConsultantCras(allCras);
     } catch (error) {
-      message.error('Erreur lors du chargement des données');
+      // message.error('Erreur lors du chargement des données');
       console.error(error);
     } finally {
       setConsultantActivityLoading(false);
@@ -620,6 +623,10 @@ const ESNDashboard = () => {
 
   // Create calendar view data
   const renderCalendarView = () => {
+    if (!selectedPeriod) {
+      return <div>Aucune période sélectionnée</div>;
+    }
+    
     const daysInMonth = selectedPeriod.daysInMonth();
     
     console.log('📅 Calendar View - Projects available:', projects);
@@ -630,14 +637,35 @@ const ESNDashboard = () => {
       console.log('📅 Sample CRA project:', cras[0]?.project);
     }
     
-    // Group CRAs by consultant - only show CRAs that have been submitted by consultants
-    // Filter out CRAs with status 'À saisir' (not yet sent) or empty status
-    const submittedStatuses = ['EVP', 'Envoyé', 'Validé', 'VE', 'VC'];
-    const allCras = Array.isArray(cras) ? cras.filter(cra => 
-      cra.statut && submittedStatuses.includes(cra.statut)
-    ) : [];
+    // Get all CRAs (we'll filter by type - work needs EVP, absences show always)
+    const allCrasRaw = Array.isArray(cras) ? cras : [];
     
-    console.log('📅 Filtered submitted CRAs:', allCras.length, 'out of', cras.length);
+    // Helper to check if entry is an absence
+    const absenceTypes = ['Congé', 'Formation', 'Maladie', 'Absence', 'CP', 'RTT', 'Autre'];
+    const isAbsenceType = (cra) => {
+      const typeImputation = cra.type_imputation || cra.Type_imputation || cra.typeImputation || '';
+      const craType = cra.type || cra.Type || '';
+      return craType.toLowerCase() === 'absence' ||
+        typeImputation.toLowerCase() === 'absence' ||
+        absenceTypes.includes(typeImputation) ||
+        absenceTypes.map(t => t.toLowerCase()).includes(typeImputation.toLowerCase());
+    };
+    
+    // Filter: Work entries need EVP or Validated status, Absences appear always
+    const allCras = allCrasRaw.filter(cra => {
+      if (isAbsenceType(cra)) {
+        return true; // Show all absences regardless of status
+      }
+      // Show both pending (EVP) and validated entries
+      return cra.statut === CRA_STATUS.SUBMITTED || 
+             cra.statut === CRA_STATUS.VALIDATED || 
+             cra.statut === CRA_STATUS.ESN_VALIDATED ||
+             cra.statut === 'Validé' ||
+             cra.statut === 'VE' ||
+             cra.statut === 'VC';
+    });
+    
+    console.log('📅 Filtered CRAs (EVP + Validated work + all absences):', allCras.length, 'out of', cras.length);
     
     const consultantGroups = {};
     allCras.forEach(cra => {
@@ -651,17 +679,45 @@ const ESNDashboard = () => {
       }
       
       // Separate work entries by project and absences
-      const craType = cra.type_imputation || cra.Type_imputation || cra.type || '';
-      const isWorkEntry = craType === 'Jour Travaillé' || craType === 'travail';
-      const isAbsenceEntry = ['Congé', 'Formation', 'Maladie', 'Absence'].includes(craType) || cra.type === 'absence';
+      // Get all possible type fields from the CRA
+      const typeImputation = cra.type_imputation || cra.Type_imputation || cra.typeImputation || '';
+      const craType = cra.type || cra.Type || '';
       
-      console.log(`📋 CRA entry - Type: "${craType}", isWork: ${isWorkEntry}, isAbsence: ${isAbsenceEntry}`, cra);
+      // Debug: log all fields to understand structure
+      console.log('🔎 CRA raw data:', {
+        type_imputation: cra.type_imputation,
+        Type_imputation: cra.Type_imputation,
+        type: cra.type,
+        Type: cra.Type,
+        statut: cra.statut,
+        jour: cra.jour,
+        Durée: cra.Durée
+      });
+      
+      // Check for absence using helper function
+      const isAbsenceEntry = isAbsenceType(cra);
+      
+      // Work entry is when type_imputation is 'Jour Travaillé' (or similar)
+      const isWorkEntry = !isAbsenceEntry && (
+        typeImputation === 'Jour Travaillé' || 
+        typeImputation.toLowerCase() === 'jour travaillé' ||
+        typeImputation.toLowerCase() === 'travail'
+      );
+      
+      console.log(`📋 CRA entry - type_imputation: "${typeImputation}", type: "${craType}", isWork: ${isWorkEntry}, isAbsence: ${isAbsenceEntry}`);
       
       if (isAbsenceEntry) {
         // This is an absence entry
         consultantGroups[consultantId].absences.push(cra);
       } else if (isWorkEntry) {
         let projectId = cra.id_bdc || cra.project?.id || cra.project?.id_bdc || 0;
+        
+        console.log('🔍 CRA project lookup:', { 
+          cra_id_bdc: cra.id_bdc, 
+          cra_project: cra.project,
+          projectId,
+          availableProjects: projects.map(p => ({ id: p.id_bdc, title: p.project_title }))
+        });
         
         // If no project ID, try to find a project for this consultant
         if (projectId === 0 && projects.length > 0) {
@@ -682,9 +738,17 @@ const ESNDashboard = () => {
           }
         }
         
-        // Look up project name from projects array
-        const project = projects.find(p => p.id_bdc === projectId);
-        const projectName = project?.project_title || cra.project?.titre || cra.project?.project_title || 'Sans projet';
+        // Look up project name from projects array - handle type mismatch (string vs number)
+        const project = projects.find(p => String(p.id_bdc) === String(projectId));
+        const projectName = project?.project_title || 
+          cra.project?.project_title || 
+          cra.project?.titre || 
+          cra.project_title ||
+          cra.projet ||
+          cra.bdc?.project_title ||
+          (projectId ? `Projet #${projectId}` : 'Sans projet');
+        
+        console.log('🏷️ Project name resolution:', { projectId, resolved: projectName, foundProject: !!project });
         
         if (!consultantGroups[consultantId].projects[projectId]) {
           consultantGroups[consultantId].projects[projectId] = {
@@ -701,8 +765,11 @@ const ESNDashboard = () => {
         if (projectId === 0 && projects.length > 0) {
           projectId = projects[0].id_bdc;
         }
-        const project = projects.find(p => p.id_bdc === projectId);
-        const projectName = project?.project_title || 'Sans projet';
+        const project = projects.find(p => String(p.id_bdc) === String(projectId));
+        const projectName = project?.project_title || 
+          cra.project?.project_title || 
+          cra.project?.titre ||
+          (projectId ? `Projet #${projectId}` : 'Sans projet');
         
         if (!consultantGroups[consultantId].projects[projectId]) {
           consultantGroups[consultantId].projects[projectId] = {
@@ -715,13 +782,24 @@ const ESNDashboard = () => {
       }
     });
 
-    // Create table data - one row per project + one row for absences + total row
+    // Create table data as TREE structure - consultants as parents with children
     const tableData = [];
     Object.values(consultantGroups).forEach((group, groupIdx) => {
       const c = group.consultant;
       const consultantName = c ? `${c.prenom || c.Prenom || ''} ${c.nom || c.Nom || ''}`.trim() : 'Consultant inconnu';
       
-      // Add project rows
+      console.log(`👤 Consultant: ${consultantName} - Projects: ${Object.keys(group.projects).length}, Absences: ${group.absences.length}`);
+      
+      // Calculate consultant total
+      const allEntries = [
+        ...Object.values(group.projects).flatMap(p => p.entries),
+        ...group.absences
+      ];
+      
+      // Create children array for this consultant
+      const children = [];
+      
+      // Add project rows as children
       Object.values(group.projects).forEach((project, projIdx) => {
         const row = {
           key: `consultant_${groupIdx}_project_${projIdx}`,
@@ -739,10 +817,10 @@ const ESNDashboard = () => {
           row[`day_${day}`] = dayEntries;
         }
         
-        tableData.push(row);
+        children.push(row);
       });
       
-      // Always add absence row for each consultant (even if empty)
+      // Add absence row as child
       const absenceRow = {
         key: `consultant_${groupIdx}_absences`,
         consultant: group.consultant,
@@ -754,39 +832,32 @@ const ESNDashboard = () => {
         entries: group.absences
       };
       
-      // Add day data
+      // Add day data for absences
       for (let day = 1; day <= daysInMonth; day++) {
         const dayEntries = group.absences.filter(e => e.jour === day);
         absenceRow[`day_${day}`] = dayEntries;
       }
       
-      tableData.push(absenceRow);
+      children.push(absenceRow);
+      console.log(`  ✅ Absence row added with ${group.absences.length} entries`);
       
-      // Add total row for this consultant
-      const allEntries = [
-        ...Object.values(group.projects).flatMap(p => p.entries),
-        ...group.absences
-      ];
+      // Create consultant parent row with children
+      const consultantRow = {
+        key: `consultant_${groupIdx}`,
+        isConsultantHeader: true,
+        consultantName: consultantName,
+        consultant: group.consultant,
+        entries: allEntries,
+        children: children
+      };
       
-      if (allEntries.length > 0) {
-        const totalRow = {
-          key: `consultant_${groupIdx}_total`,
-          consultant: group.consultant,
-          consultantName: consultantName,
-          projectName: 'TOTAL',
-          isAbsence: false,
-          isTotal: true,
-          entries: allEntries
-        };
-        
-        // Add day data - combine all entries for each day
-        for (let day = 1; day <= daysInMonth; day++) {
-          const dayEntries = allEntries.filter(e => e.jour === day);
-          totalRow[`day_${day}`] = dayEntries;
-        }
-        
-        tableData.push(totalRow);
+      // Add day data for consultant total
+      for (let day = 1; day <= daysInMonth; day++) {
+        const dayEntries = allEntries.filter(e => e.jour === day);
+        consultantRow[`day_${day}`] = dayEntries;
       }
+      
+      tableData.push(consultantRow);
     });
 
     // Calculate totals for summary - use ALL CRAs, not just pending ones
@@ -801,34 +872,56 @@ const ESNDashboard = () => {
     // Create columns
     const calendarColumns = [
       {
-        title: 'Projet / consultant',
+        title: 'Consultant / Projet',
         key: 'project',
         fixed: 'left',
-        width: 200,
+        width: 250,
         render: (_, record) => {
-          if (record.isTotal) {
-            return <span style={{ fontWeight: 'bold', fontSize: '14px' }}>TOTAL</span>;
+          if (record.isConsultantHeader) {
+            // Calculate total for consultant
+            let total = 0;
+            for (let day = 1; day <= daysInMonth; day++) {
+              const dayEntries = record[`day_${day}`] || [];
+              total += dayEntries.reduce((sum, e) => sum + (parseFloat(e.Durée || 0) * 8), 0);
+            }
+            const displayTotal = total > 0 ? (total % 1 === 0 ? `${Math.floor(total)}h` : `${total.toFixed(1)}h`) : '0h';
+            
+            return (
+              <div style={{ 
+                fontWeight: 'bold', 
+                fontSize: '14px', 
+                color: '#1890ff',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center'
+              }}>
+                <span>{record.consultantName}</span>
+                <span style={{ 
+                  backgroundColor: '#1890ff', 
+                  color: '#fff', 
+                  padding: '2px 8px', 
+                  borderRadius: '4px',
+                  fontSize: '12px'
+                }}>
+                  {displayTotal}
+                </span>
+              </div>
+            );
           }
           if (record.isAbsence) {
             return (
               <div>
-                <div style={{ color: '#fa8c16', fontWeight: 'bold' }}>
+                <span style={{ color: '#fa8c16', fontWeight: '500' }}>
                   {record.projectName}
-                </div>
-                <div style={{ fontSize: '11px', color: '#999' }}>
-                  {record.projectSubtitle || 'Congés, formations, absences'}
-                </div>
+                </span>
               </div>
             );
           }
           return (
             <div>
-              <div style={{ color: '#000', fontWeight: 'normal' }}>
+              <span style={{ color: '#000' }}>
                 {record.projectName}
-              </div>
-              <div style={{ fontSize: '11px', color: '#999' }}>
-                {record.consultantName}
-              </div>
+              </span>
             </div>
           );
         }
@@ -837,9 +930,14 @@ const ESNDashboard = () => {
         title: 'Total',
         key: 'total',
         fixed: 'left',
-        width: 80,
+        width: 70,
         className: 'total-column',
         render: (_, record) => {
+          // Hide for consultant header (shown in first column)
+          if (record.isConsultantHeader) {
+            return null;
+          }
+          
           // Calculate total duration for this row - convert days to hours (1 day = 8 hours)
           let total = 0;
           for (let day = 1; day <= daysInMonth; day++) {
@@ -847,21 +945,52 @@ const ESNDashboard = () => {
             total += dayEntries.reduce((sum, e) => sum + (parseFloat(e.Durée || 0) * 8), 0);
           }
           
-          // Display logic: < 8h show as hours, >= 8h show as days
+          // Display in hours only
           let displayValue = '-';
           if (total > 0) {
-            if (total < 8) {
-              displayValue = `${total.toFixed(1)}h`;
-            } else {
-              const days = total / 8;
-              displayValue = days % 1 === 0 ? `${Math.floor(days)}j` : `${days.toFixed(1)}j`;
-            }
+            displayValue = total % 1 === 0 ? `${Math.floor(total)}h` : `${total.toFixed(1)}h`;
           }
           
           return (
             <span style={{ fontWeight: record.isTotal ? 'bold' : 'normal' }}>
               {displayValue}
             </span>
+          );
+        }
+      },
+      {
+        title: 'Actions',
+        key: 'actions',
+        fixed: 'left',
+        width: 100,
+        render: (_, record) => {
+          // Don't show actions for header rows
+          if (record.isConsultantHeader) {
+            return null;
+          }
+          
+          // Check if any entries have EVP status (pending validation)
+          const pendingEntries = (record.entries || []).filter(
+            entry => entry.statut === CRA_STATUS.SUBMITTED
+          );
+          
+          if (pendingEntries.length === 0) {
+            return <Text type="secondary" style={{ fontSize: '11px' }}>-</Text>;
+          }
+          
+          return (
+            <Button 
+              type="primary" 
+              size="small"
+              icon={<CheckCircleOutlined />}
+              onClick={() => {
+                pendingEntries.forEach(entry => {
+                  handleValidateCRA(entry.id_imputation || entry.ID_CRA);
+                });
+              }}
+            >
+              Valider
+            </Button>
           );
         }
       }
@@ -888,9 +1017,9 @@ const ESNDashboard = () => {
         align: 'center',
         className: isWeekend ? 'weekend-cell' : '',
         render: (dayEntries, record) => {
-          // For TOTAL row, don't show individual day values
-          if (record.isTotal) {
-            return <span style={{ color: '#ddd' }}>-</span>;
+          // For header or TOTAL row, don't show individual day values
+          if (record.isConsultantHeader || record.isTotal) {
+            return null;
           }
           
           if (!dayEntries || dayEntries.length === 0) {
@@ -901,32 +1030,57 @@ const ESNDashboard = () => {
           const totalDuration = dayEntries.reduce((sum, e) => sum + (parseFloat(e.Durée || 0) * 8), 0);
           
           // For regular rows (projects and absences), show colored badges
+          // Check if this is an absence entry - flexible matching
+          const absenceTypes = ['Congé', 'Formation', 'Maladie', 'Absence', 'CP', 'RTT', 'Autre'];
           const hasAbsence = dayEntries.some(e => {
-            const entryType = e.type_imputation || e.type || '';
-            return entryType !== 'Jour Travaillé' && entryType !== 'travail';
+            const typeImputation = e.type_imputation || e.Type_imputation || e.typeImputation || '';
+            const type = e.type || e.Type || '';
+            return type.toLowerCase() === 'absence' || 
+              typeImputation.toLowerCase() === 'absence' ||
+              absenceTypes.includes(typeImputation) ||
+              absenceTypes.map(t => t.toLowerCase()).includes(typeImputation.toLowerCase());
           });
           
-          // Display logic: < 8h show as hours, >= 8h show as days
-          let displayValue;
-          if (totalDuration < 8) {
-            displayValue = `${totalDuration.toFixed(1)}h`;
-          } else {
-            const days = totalDuration / 8;
-            displayValue = days % 1 === 0 ? `${Math.floor(days)}j` : `${days.toFixed(1)}j`;
+          // Check if all entries are validated
+          const allValidated = dayEntries.every(e => 
+            e.statut === CRA_STATUS.VALIDATED || 
+            e.statut === CRA_STATUS.ESN_VALIDATED ||
+            e.statut === 'Validé' ||
+            e.statut === 'VE' ||
+            e.statut === 'VC'
+          );
+          
+          // Check if any entry is pending (EVP)
+          const hasPending = dayEntries.some(e => e.statut === CRA_STATUS.SUBMITTED);
+          
+          // Determine background color based on status and type
+          let bgColor = '#52c41a'; // Default: green for work
+          if (hasAbsence) {
+            bgColor = allValidated ? '#87d068' : '#fa8c16'; // Lighter orange if validated, orange if pending
+          } else if (allValidated) {
+            bgColor = '#87d068'; // Light green for validated work
+          } else if (hasPending) {
+            bgColor = '#1890ff'; // Blue for pending validation
           }
+          
+          // Display in hours only
+          const displayValue = totalDuration % 1 === 0 ? `${Math.floor(totalDuration)}h` : `${totalDuration.toFixed(1)}h`;
+          
+          // Build tooltip with status
+          const statusLabel = allValidated ? '✓ Validé' : (hasPending ? '⏳ En attente' : '');
           
           return (
             <div
               style={{
                 cursor: 'pointer',
-                backgroundColor: hasAbsence ? '#fa8c16' : '#52c41a',
+                backgroundColor: bgColor,
                 color: '#fff',
                 padding: '4px 2px',
                 borderRadius: '4px',
                 fontWeight: 'bold',
                 fontSize: '11px'
               }}
-              title={dayEntries.map(e => `${e.type_imputation || e.type}: ${(parseFloat(e.Durée || 0) * 8).toFixed(1)}h`).join('\n')}
+              title={`${statusLabel}\n${dayEntries.map(e => `${e.type_imputation || e.type}: ${(parseFloat(e.Durée || 0) * 8).toFixed(1)}h`).join('\n')}`}
             >
               {displayValue}
             </div>
@@ -949,10 +1103,20 @@ const ESNDashboard = () => {
           }}>
             <Space split={<span style={{ color: '#d9d9d9' }}>|</span>}>
               <span><strong>Période:</strong> {selectedPeriod.format('MMMM YYYY')}</span>
-              <span><strong>Heures travaillées:</strong> {totalHours < 8 ? `${totalHours.toFixed(1)}h` : `${(totalHours / 8) % 1 === 0 ? Math.floor(totalHours / 8) : (totalHours / 8).toFixed(1)}j`}</span>
+              <span><strong>Heures travaillées:</strong> {totalHours % 1 === 0 ? Math.floor(totalHours) : totalHours.toFixed(1)}h</span>
               <span><strong>Jours ouvrés:</strong> {workDaysInMonth}</span>
             </Space>
           </div>
+        </div>
+
+        {/* Legend */}
+        <div style={{ marginBottom: 16, padding: '8px 16px', background: '#fafafa', borderRadius: 8 }}>
+          <Space size="large" wrap>
+            <span><span style={{ display: 'inline-block', width: 16, height: 16, backgroundColor: '#1890ff', borderRadius: 4, marginRight: 8 }}></span>En attente</span>
+            <span><span style={{ display: 'inline-block', width: 16, height: 16, backgroundColor: '#87d068', borderRadius: 4, marginRight: 8 }}></span>Validé</span>
+            <span><span style={{ display: 'inline-block', width: 16, height: 16, backgroundColor: '#fa8c16', borderRadius: 4, marginRight: 8 }}></span>Absence</span>
+            <span><span style={{ display: 'inline-block', width: 16, height: 16, backgroundColor: '#f5f5f5', border: '1px solid #d9d9d9', borderRadius: 4, marginRight: 8 }}></span>Week-end</span>
+          </Space>
         </div>
 
         <Table
@@ -964,27 +1128,38 @@ const ESNDashboard = () => {
           scroll={{ x: 'max-content' }}
           size="small"
           bordered
+          expandable={{
+            defaultExpandAllRows: true,
+            indentSize: 20,
+          }}
           rowClassName={(record) => {
-            if (record.isTotal) return 'grand-total-row';
+            if (record.isConsultantHeader) return 'consultant-header-row';
             if (record.isAbsence) return 'absence-row';
-            return '';
+            return 'project-row';
           }}
         />
         <style jsx="true">{`
           .weekend-cell {
             background-color: #f5f5f5 !important;
           }
+          .consultant-header-row {
+            background-color: #e6f7ff !important;
+          }
+          .consultant-header-row > td:first-child {
+            font-weight: bold;
+          }
           .absence-row {
             background-color: #fff7e6 !important;
           }
-          .grand-total-row {
-            background-color: #e6f7ff !important;
-            font-weight: bold;
-            border-top: 2px solid #1890ff !important;
+          .project-row {
+            background-color: #fff !important;
           }
           .total-column {
             background-color: #fafafa !important;
             border-right: 2px solid #d9d9d9 !important;
+          }
+          .ant-table-row-expand-icon {
+            color: #1890ff !important;
           }
         `}</style>
       </>
@@ -1004,9 +1179,6 @@ const ESNDashboard = () => {
           <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between' }}>
             <Title level={5} style={{ margin: 0 }}>Liste des Consultants</Title>
             <Space>
-              <Button type="default" icon={<ProjectOutlined />} onClick={handleCreateProject}>
-                Créer un projet
-              </Button>
               <Button type="primary" icon={<PlusOutlined />} onClick={handleAddConsultant}>
                 Ajouter un consultant
               </Button>
@@ -1014,7 +1186,7 @@ const ESNDashboard = () => {
           </div>
           <Table
             columns={consultantColumns}
-            dataSource={consultants}
+            dataSource={consultants.filter(c => c.email !== 'placeholder@project.esn')}
             rowKey="ID_collab"
             loading={loading}
             pagination={{ pageSize: 10 }}
@@ -1033,12 +1205,21 @@ const ESNDashboard = () => {
         <Card>
           <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <Title level={5} style={{ margin: 0 }}>CRA en attente de validation</Title>
-            <DatePicker
-              picker="month"
-              value={selectedPeriod}
-              onChange={setSelectedPeriod}
-              format="MM/YYYY"
-            />
+            <Space>
+              <DatePicker
+                picker="month"
+                value={selectedPeriod}
+                onChange={setSelectedPeriod}
+                format="MM/YYYY"
+              />
+              <Button 
+                icon={<ReloadOutlined />} 
+                onClick={loadData}
+                loading={loading}
+              >
+                Actualiser
+              </Button>
+            </Space>
           </div>
           <Tabs
             items={[
@@ -1102,30 +1283,6 @@ const ESNDashboard = () => {
                 render: (jours) => jours || '-',
               },
               {
-                title: 'Consultants',
-                key: 'consultants',
-                render: (_, record) => {
-                  // Check if this is the currently selected project and we have loaded consultants
-                  if (selectedProjectForConsultant && selectedProjectForConsultant.id_bdc === record.id_bdc && projectConsultants.length > 0) {
-                    return (
-                      <Space wrap>
-                        {projectConsultants.map((pc) => (
-                          <Tag key={pc.id_consultant} color={pc.is_primary ? 'blue' : 'default'}>
-                            {pc.prenom} {pc.nom}
-                          </Tag>
-                        ))}
-                      </Space>
-                    );
-                  }
-                  // Show placeholder to click to view consultants
-                  return (
-                    <Text type="secondary" style={{ fontSize: '12px' }}>
-                      Cliquez sur voir
-                    </Text>
-                  );
-                },
-              },
-              {
                 title: 'Période',
                 key: 'period',
                 render: (_, record) => (
@@ -1182,7 +1339,7 @@ const ESNDashboard = () => {
                         setConsultantModalVisible(true);
                       }}
                     >
-                      Ajouter
+                      Affecter
                     </Button>
                   </Space>
                 ),
@@ -1282,7 +1439,15 @@ const ESNDashboard = () => {
           <Row gutter={16}>
             <Col span={12}>
               <Form.Item name="Poste" label="Poste">
-                <Input placeholder="Développeur, Chef de projet..." />
+                <Select placeholder="Sélectionner un poste">
+                  <Select.Option value="Développeur">Développeur</Select.Option>
+                  <Select.Option value="Chef de projet">Chef de projet</Select.Option>
+                  <Select.Option value="Consultant">Consultant</Select.Option>
+                  <Select.Option value="Architecte">Architecte</Select.Option>
+                  <Select.Option value="Tech Lead">Tech Lead</Select.Option>
+                  <Select.Option value="DevOps">DevOps</Select.Option>
+                  <Select.Option value="Autre">Autre</Select.Option>
+                </Select>
               </Form.Item>
             </Col>
             <Col span={12}>
@@ -1640,7 +1805,7 @@ const ESNDashboard = () => {
         {/* Add consultant form - only show in add mode */}
         {!isViewOnlyMode && (
         <div>
-          <Title level={5}>Ajouter des consultants</Title>
+          <Title level={5}>Affecter des consultants</Title>
           <Form
             form={consultantAssignForm}
             layout="vertical"
@@ -1722,7 +1887,7 @@ const ESNDashboard = () => {
                   Fermer
                 </Button>
                 <Button type="primary" htmlType="submit" icon={<PlusOutlined />}>
-                  Ajouter
+                  Affecter
                 </Button>
               </Space>
             </Form.Item>
@@ -1780,9 +1945,12 @@ const ESNDashboard = () => {
                 </Col>
                 <Col span={8}>
                   <Statistic
-                    title="Total jours"
-                    value={consultantCras.reduce((sum, cra) => sum + (parseFloat(cra.duree || cra.duration || 0)), 0).toFixed(1)}
+                    title="Total heures"
+                    value={consultantCras
+                      .filter(cra => ['EVP', 'Validé', 'VE', 'VC'].includes(cra.statut))
+                      .reduce((sum, cra) => sum + (parseFloat(cra.Durée || cra.duree || cra.duration || 0) * 8), 0).toFixed(1)}
                     prefix={<CalendarOutlined />}
+                    suffix="h"
                   />
                 </Col>
               </Row>
@@ -1809,10 +1977,66 @@ const ESNDashboard = () => {
                     },
                    
                     {
-                      title: 'Jours',
+                      title: 'Nombre de jours',
                       dataIndex: 'jours',
                       key: 'jours',
                       render: (jours) => jours || '-',
+                    },
+                    {
+                      title: 'Jours consommés',
+                      key: 'jours_consommes',
+                      render: (_, record, index) => {
+                        // Calculate consumed days from CRAs for this project
+                        // Filter work CRAs (not absences) that are validated or pending
+                        const absenceTypes = ['Congé', 'Formation', 'Maladie', 'Absence', 'CP', 'RTT', 'Autre', 'absence'];
+                        const projectTitle = record.project_title || record.titre || '';
+                        
+                        // Debug: log CRA structure
+                        if (index === 0 && consultantCras.length > 0) {
+                          console.log('🔍 Debug Jours consommés - First CRA:', consultantCras[0]);
+                          console.log('🔍 Debug Jours consommés - Project record:', record);
+                          console.log('🔍 Debug Jours consommés - All CRAs:', consultantCras);
+                        }
+                        
+                        const projectCras = consultantCras.filter(cra => {
+                          const isValidOrPending = ['EVP', 'Validé', 'VE', 'VC'].includes(cra.statut);
+                          if (!isValidOrPending) return false;
+                          
+                          // Check if it's an absence - don't count absences
+                          const craType = (cra.type || '').toLowerCase();
+                          const typeImputation = cra.type_imputation || cra.Type_imputation || '';
+                          if (craType === 'absence' || absenceTypes.includes(typeImputation)) {
+                            return false;
+                          }
+                          
+                          // Check if CRA is linked to this specific project by ID
+                          const projectId = cra.id_bdc || cra.project?.id || cra.projet_id;
+                          if (projectId && String(projectId) === String(record.id_bdc)) {
+                            return true;
+                          }
+                          
+                          // Check by project name/title
+                          const craProjectName = cra.project?.titre || cra.project?.project_title || cra.projet_titre || cra.project_title || '';
+                          if (craProjectName && projectTitle && craProjectName.toLowerCase() === projectTitle.toLowerCase()) {
+                            return true;
+                          }
+                          
+                          // If CRA has no project info at all, attribute to the first project in the list
+                          // This matches the display logic in the activity table
+                          if (!projectId && !craProjectName && index === 0) {
+                            return true;
+                          }
+                          
+                          return false;
+                        });
+                        
+                        const totalDays = projectCras.reduce((sum, cra) => {
+                          return sum + parseFloat(cra.Durée || cra.duree || cra.duration || 0);
+                        }, 0);
+                        
+                        if (totalDays === 0) return '0 j';
+                        return totalDays % 1 === 0 ? `${totalDays} j` : `${totalDays.toFixed(2)} j`;
+                      },
                     },
                     {
                       title: 'Période',
@@ -1872,19 +2096,93 @@ const ESNDashboard = () => {
 
             {/* Recent CRA Activity */}
             <div>
-              <Title level={5}>
-                <CalendarOutlined /> Activité récente (période actuelle)
-              </Title>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                <Title level={5} style={{ margin: 0 }}>
+                  <CalendarOutlined /> Activité récente (période actuelle)
+                </Title>
+                <Space>
+                  {/* <Select
+                    placeholder="Projet"
+                    allowClear
+                    style={{ width: 180 }}
+                    value={activityFilterProject}
+                    onChange={setActivityFilterProject}
+                  >
+                    <Select.Option value="0">Sans projet</Select.Option>
+                    {consultantProjects.map(p => (
+                      <Select.Option key={p.id_bdc} value={String(p.id_bdc)}>
+                        {p.project_title || p.titre}
+                      </Select.Option>
+                    ))}
+                  </Select> */}
+                  <Select
+                    placeholder="Statut"
+                    allowClear
+                    style={{ width: 120 }}
+                    value={activityFilterStatus}
+                    onChange={setActivityFilterStatus}
+                  >
+                    <Select.Option value="EVP">EVP</Select.Option>
+                    <Select.Option value="Validé">Validé</Select.Option>
+                  </Select>
+                  <Select
+                    placeholder="Type"
+                    allowClear
+                    style={{ width: 120 }}
+                    value={activityFilterType}
+                    onChange={setActivityFilterType}
+                  >
+                    <Select.Option value="travail">Travail</Select.Option>
+                    <Select.Option value="absence">Absence</Select.Option>
+                  </Select>
+                </Space>
+              </div>
               {consultantCras.filter(c => {
                 const period = c.période || c.periode;
-                return period === selectedPeriod.format('MM_YYYY');
+                const isValidOrPending = ['EVP', 'Validé', 'VE', 'VC'].includes(c.statut);
+                if (!(period === selectedPeriod.format('MM_YYYY') && isValidOrPending)) return false;
+                
+                // Apply project filter
+                if (activityFilterProject) {
+                  const projectId = c.id_bdc || c.project?.id;
+                  if (String(projectId) !== String(activityFilterProject)) return false;
+                }
+                
+                // Apply status filter
+                if (activityFilterStatus && c.statut !== activityFilterStatus) return false;
+                
+                // Apply type filter
+                if (activityFilterType) {
+                  const recordType = (c.type || '').toLowerCase();
+                  if (recordType !== activityFilterType) return false;
+                }
+                
+                return true;
               }).length === 0 ? (
                 <Text type="secondary">Aucune activité pour cette période</Text>
               ) : (
                 <Table
                   dataSource={consultantCras.filter(c => {
                     const period = c.période || c.periode;
-                    return period === selectedPeriod.format('MM_YYYY');
+                    const isValidOrPending = ['EVP', 'Validé', 'VE', 'VC'].includes(c.statut);
+                    if (!(period === selectedPeriod.format('MM_YYYY') && isValidOrPending)) return false;
+                    
+                    // Apply project filter
+                    if (activityFilterProject) {
+                      const projectId = c.id_bdc || c.project?.id;
+                      if (String(projectId) !== String(activityFilterProject)) return false;
+                    }
+                    
+                    // Apply status filter
+                    if (activityFilterStatus && c.statut !== activityFilterStatus) return false;
+                    
+                    // Apply type filter
+                    if (activityFilterType) {
+                      const recordType = (c.type || '').toLowerCase();
+                      if (recordType !== activityFilterType) return false;
+                    }
+                    
+                    return true;
                   }).slice(0, 10)}
                   rowKey="id_cra"
                   pagination={false}
@@ -1899,6 +2197,44 @@ const ESNDashboard = () => {
                         const [month, year] = period.split('_');
                         const day = record.jour || record.day || 1;
                         return `${day}/${month}/${year}`;
+                      },
+                    },
+                    {
+                      title: 'Projet',
+                      key: 'project',
+                      render: (_, record) => {
+                        // Check if it's an absence type first
+                        const recordType = record.type || '';
+                        const typeImputation = record.type_imputation || record.Type_imputation || '';
+                        const absenceTypes = ['Congé', 'Formation', 'Maladie', 'Absence', 'CP', 'RTT', 'Autre', 'absence'];
+                        if (recordType.toLowerCase() === 'absence' || absenceTypes.includes(typeImputation)) {
+                          return 'Absence';
+                        }
+                        
+                        // If project object has titre (from API)
+                        if (record.project?.titre) {
+                          return record.project.titre;
+                        }
+                        
+                        // If project object has project_title
+                        if (record.project?.project_title) {
+                          return record.project.project_title;
+                        }
+                        
+                        // Get project ID and find in projects list
+                        const projectId = record.id_bdc || record.project?.id;
+                        if (projectId && projectId > 0) {
+                          const project = projects.find(p => String(p.id_bdc) === String(projectId));
+                          if (project) return project.project_title;
+                        }
+                        
+                        // Fallback: if no project on CRA but consultant has assigned projects, show first one
+                        if (consultantProjects.length > 0) {
+                          return consultantProjects[0].project_title || consultantProjects[0].titre || 'Projet assigné';
+                        }
+                        
+                        // If no project assigned at all
+                        return 'Sans projet';
                       },
                     },
                     {
@@ -1918,8 +2254,10 @@ const ESNDashboard = () => {
                       title: 'Durée',
                       key: 'duree',
                       render: (_, record) => {
-                        const duree = parseFloat(record.duree || record.duration || 0);
-                        return `${duree}h`;
+                        const duree = parseFloat(record.Durée || record.duree || record.duration || 0);
+                        // Convert days to hours (1 day = 8 hours)
+                        const hours = duree * 8;
+                        return hours > 0 ? `${hours % 1 === 0 ? Math.floor(hours) : hours.toFixed(1)}h` : '0h';
                       },
                     },
                     {
