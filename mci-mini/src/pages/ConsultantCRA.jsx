@@ -66,6 +66,9 @@ const ConsultantCRA = () => {
 
   const consultantId = getUserId();
   const userName = getUserName();
+  
+  // Ref to preserve scroll position
+  const tableScrollRef = useRef(null);
 
   useEffect(() => {
     fetchMonthlyReport(selectedMonth);
@@ -147,8 +150,23 @@ const ConsultantCRA = () => {
     }
   };
 
-  const fetchMonthlyReport = async (date) => {
-    setLoading(true);
+  const fetchMonthlyReport = async (date, preserveScroll = false) => {
+    // Save scroll position before loading
+    let scrollPosition = { x: 0, y: 0 };
+    if (preserveScroll && tableScrollRef.current) {
+      const scrollContainer = tableScrollRef.current.querySelector('.ant-table-body');
+      if (scrollContainer) {
+        scrollPosition = {
+          x: scrollContainer.scrollLeft,
+          y: scrollContainer.scrollTop
+        };
+      }
+    }
+    
+    // Only show loading spinner if not preserving scroll (to avoid table unmount)
+    if (!preserveScroll) {
+      setLoading(true);
+    }
     try {
       const period = date.format('MM_YYYY');
 
@@ -265,6 +283,15 @@ const ConsultantCRA = () => {
           ? apiResponse.data
           : (Array.isArray(apiResponse) ? apiResponse : []);
         console.log('Imputations list:', imputationsList);
+        // Debug: log all statuts to check for cancelled entries
+        console.log('📋 All imputation statuts:', imputationsList.map(imp => ({ 
+          id: imp.id_imputation, 
+          jour: imp.jour, 
+          statut: imp.statut, 
+          commentaire: imp.commentaire 
+        })));
+        const cancelledEntries = imputationsList.filter(imp => imp.statut === 'Annulé');
+        console.log('🚫 Cancelled entries:', cancelledEntries);
         setImputations(imputationsList);
         processCraData(imputationsList, date);
       } else {
@@ -276,6 +303,18 @@ const ConsultantCRA = () => {
       message.error('Erreur lors du chargement des données');
     } finally {
       setLoading(false);
+      
+      // Restore scroll position after data loads
+      if (preserveScroll && tableScrollRef.current) {
+        // Use requestAnimationFrame to ensure DOM has updated
+        requestAnimationFrame(() => {
+          const scrollContainer = tableScrollRef.current?.querySelector('.ant-table-body');
+          if (scrollContainer) {
+            scrollContainer.scrollLeft = scrollPosition.x;
+            scrollContainer.scrollTop = scrollPosition.y;
+          }
+        });
+      }
     }
   };
 
@@ -472,7 +511,7 @@ const ConsultantCRA = () => {
       if (result.success) {
         message.success('Imputation ajoutée avec succès');
         setCraEntryModalVisible(false);
-        fetchMonthlyReport(selectedMonth);
+        fetchMonthlyReport(selectedMonth, true);
       } else {
         message.error(result.error || 'Erreur lors de la création');
       }
@@ -545,7 +584,7 @@ const ConsultantCRA = () => {
         message.success('Imputation mise à jour');
         setSelectedCraEntry(null);
         setEditDrawerVisible(false);
-        fetchMonthlyReport(selectedMonth);
+        fetchMonthlyReport(selectedMonth, true);
       } else {
         message.error(result.error || 'Erreur lors de la mise à jour');
       }
@@ -565,7 +604,7 @@ const ConsultantCRA = () => {
         message.success('Imputation supprimée');
         // Update drawer entries
         setDayEntries(prev => prev.filter(e => e.id_imputation !== entryId));
-        fetchMonthlyReport(selectedMonth);
+        fetchMonthlyReport(selectedMonth, true);
       } else {
         message.error(result.error || 'Erreur lors de la suppression');
       }
@@ -586,12 +625,13 @@ const ConsultantCRA = () => {
     console.log('🔍 openSubmissionModalForProject called:', { projectId, projectTitle, projectImputations });
     console.log('🔍 All imputations:', imputations);
 
-    // Statuses that indicate the entry hasn't been submitted yet
+    // Statuses that indicate the entry has been submitted and is in process or validated
     const submittedStatuses = ['EVP', 'Envoyé', 'Validé', 'VE', 'VC'];
 
-    // Filter only entries that haven't been submitted yet
+    // Filter entries that can be submitted: not yet submitted OR cancelled by ESN (can resubmit)
     const projectEntries = projectImputations.filter(imp =>
-      !submittedStatuses.includes(imp.statut) && (imp.statut === 'À saisir' || !imp.statut || imp.statut === '')
+      !submittedStatuses.includes(imp.statut) && 
+      (imp.statut === 'À saisir' || imp.statut === 'Annulé' || !imp.statut || imp.statut === '')
     );
 
     console.log('🔍 Filtered projectEntries:', projectEntries);
@@ -781,9 +821,12 @@ const ConsultantCRA = () => {
           const submittedStatuses = ['EVP', 'Envoyé', 'Validé', 'VE', 'VC'];
           const allSent = projectImputations.length > 0 && projectImputations.every(imp => submittedStatuses.includes(imp.statut));
           const someSent = projectImputations.some(imp => submittedStatuses.includes(imp.statut));
+          const hasCancelled = projectImputations.some(imp => imp.statut === 'Annulé');
 
           if (allSent) {
             return <Tag color="green">Envoyé</Tag>;
+          } else if (hasCancelled) {
+            return <Tag color="red">Annulé - À renvoyer</Tag>;
           } else if (someSent) {
             return <Tag color="orange">Partiel</Tag>;
           }
@@ -1029,20 +1072,25 @@ const ConsultantCRA = () => {
           }
 
           return (
-            <div
-              onClick={() => openEditDrawer(day)}
-              style={{
-                cursor: 'pointer',
-                backgroundColor: cellData.type === 'Congé' || cellData.type === 'Absence' ? '#fa8c16' : '#52c41a',
-                color: '#fff',
-                padding: '4px',
-                borderRadius: '4px',
-                fontWeight: 'bold',
-                fontSize: '12px'
-              }}
-            >
-              {formatDuration(cellData.duration)}
-            </div>
+            <Tooltip title={cellData.hasCancelled ? 'Annulé par ESN - Cliquez pour modifier' : undefined}>
+              <div
+                onClick={() => openEditDrawer(day)}
+                style={{
+                  cursor: 'pointer',
+                  backgroundColor: cellData.hasCancelled 
+                    ? '#ff4d4f' 
+                    : (cellData.type === 'Congé' || cellData.type === 'Absence' ? '#fa8c16' : '#52c41a'),
+                  color: '#fff',
+                  padding: '4px',
+                  borderRadius: '4px',
+                  fontWeight: 'bold',
+                  fontSize: '12px',
+                  border: cellData.hasCancelled ? '2px solid #a8071a' : 'none'
+                }}
+              >
+                {cellData.hasCancelled ? '⚠️' : ''}{formatDuration(cellData.duration)}
+              </div>
+            </Tooltip>
           );
         }
       });
@@ -1100,7 +1148,9 @@ const ConsultantCRA = () => {
           if (dayTotal > 0) {
             days[dayData.day] = {
               duration: dayTotal,
-              type: dayEntries[0]?.type_imputation
+              type: dayEntries[0]?.type_imputation,
+              statut: dayEntries[0]?.statut,
+              hasCancelled: dayEntries.some(e => e.statut === 'Annulé')
             };
           }
         });
@@ -1122,42 +1172,50 @@ const ConsultantCRA = () => {
     });
 
     // Add Absence row for all non-work imputations (Congé, Formation, Maladie, Absence)
-    // Always show this row so users can add absences even when there are none yet
-    const absenceImputations = imputations.filter(imp =>
-      imp.type === 'absence' ||
-      ['Congé', 'Formation', 'Maladie', 'Absence'].includes(imp.type_imputation)
-    );
+    // Only show this row when there are active projects in the calendar
+    const hasProjects = data.length > 0;
+    
+    if (hasProjects) {
+      const absenceImputations = imputations.filter(imp =>
+        imp.type === 'absence' ||
+        ['Congé', 'Formation', 'Maladie', 'Absence'].includes(imp.type_imputation)
+      );
 
-    const absenceTotal = absenceImputations.reduce((sum, e) => sum + parseFloat(e.Durée || 0), 0);
-    const absenceDays = {};
+      const absenceTotal = absenceImputations.reduce((sum, e) => sum + parseFloat(e.Durée || 0), 0);
+      const absenceDays = {};
 
-    craData?.days?.forEach(dayData => {
-      const dayEntries = absenceImputations.filter(imp => parseInt(imp.jour) === dayData.day);
-      const dayTotal = dayEntries.reduce((sum, e) => sum + parseFloat(e.Durée || 0), 0);
-      if (dayTotal > 0) {
-        absenceDays[dayData.day] = {
-          duration: dayTotal,
-          type: dayEntries[0]?.type_imputation || dayEntries[0]?.type
-        };
-      }
-    });
+      craData?.days?.forEach(dayData => {
+        const dayEntries = absenceImputations.filter(imp => parseInt(imp.jour) === dayData.day);
+        const dayTotal = dayEntries.reduce((sum, e) => sum + parseFloat(e.Durée || 0), 0);
+        if (dayTotal > 0) {
+          absenceDays[dayData.day] = {
+            duration: dayTotal,
+            type: dayEntries[0]?.type_imputation || dayEntries[0]?.type,
+            statut: dayEntries[0]?.statut,
+            hasCancelled: dayEntries.some(e => e.statut === 'Annulé')
+          };
+        }
+      });
 
-    // Always add absence row (even if empty) so users can add absences
-    data.push({
-      key: 'absence_row',
-      isAbsence: true,
-      projectTitle: "Pas d'activité / Absence",
-      bdcNumber: '-',
-      total: absenceTotal,
-      days: absenceDays
-    });
+      // Add absence row only when there are projects
+      data.push({
+        key: 'absence_row',
+        isAbsence: true,
+        projectTitle: "Pas d'activité / Absence",
+        bdcNumber: '-',
+        total: absenceTotal,
+        days: absenceDays
+      });
+    }
 
-    // Grand total row
-    data.push({
-      key: 'grand_total',
-      isTotal: true,
-      total: craData?.totalDays?.toFixed(1) || 0
-    });
+    // Grand total row - only show when there are projects
+    if (hasProjects) {
+      data.push({
+        key: 'grand_total',
+        isTotal: true,
+        total: craData?.totalDays?.toFixed(1) || 0
+      });
+    }
 
     return data;
   };
@@ -1168,6 +1226,7 @@ const ConsultantCRA = () => {
         <span><span style={{ display: 'inline-block', width: 16, height: 16, backgroundColor: '#f6ffed', border: '1px dashed #b7eb8f', borderRadius: 4, marginRight: 8 }}></span>Disponible</span>
         <span><span style={{ display: 'inline-block', width: 16, height: 16, backgroundColor: '#52c41a', borderRadius: 4, marginRight: 8 }}></span>Travail</span>
         <span><span style={{ display: 'inline-block', width: 16, height: 16, backgroundColor: '#fa8c16', borderRadius: 4, marginRight: 8 }}></span>Congé / Absence</span>
+        <span><span style={{ display: 'inline-block', width: 16, height: 16, backgroundColor: '#ff4d4f', border: '2px solid #a8071a', borderRadius: 4, marginRight: 8 }}></span>Annulé par ESN</span>
         <span><span style={{ display: 'inline-block', width: 16, height: 16, backgroundColor: '#f5f5f5', borderRadius: 4, marginRight: 8 }}></span>Hors contrat</span>
         <span><span style={{ display: 'inline-block', width: 16, height: 16, backgroundColor: '#f0f0f0', borderRadius: 4, marginRight: 8 }}></span>Week-end</span>
         {showHolidays && <span><span style={{ display: 'inline-block', width: 16, height: 16, backgroundColor: '#fffbe6', border: '1px solid #ffe58f', borderRadius: 4, marginRight: 8 }}></span>Jour férié</span>}
@@ -1233,23 +1292,49 @@ const ConsultantCRA = () => {
             />
           )}
 
+          {/* Alert for cancelled CRAs
+          {imputations.some(imp => imp.statut === 'Annulé') && (
+            <Alert
+              message="CRA Annulé par l'ESN"
+              description={
+                <div>
+                  <p>Certaines de vos imputations ont été annulées par votre ESN et nécessitent des corrections.</p>
+                  {imputations.filter(imp => imp.statut === 'Annulé').map((imp, idx) => (
+                    <div key={idx} style={{ marginTop: 8, padding: '8px 12px', background: '#fff', borderRadius: 4, border: '1px solid #ffa39e' }}>
+                      <strong>Jour {imp.jour}:</strong> {imp.commentaire || 'Aucune remarque'}
+                    </div>
+                  ))}
+                  <p style={{ marginTop: 12, marginBottom: 0 }}>
+                    <strong>Action requise:</strong> Modifiez les entrées concernées puis renvoyez le CRA pour validation.
+                  </p>
+                </div>
+              }
+              type="error"
+              showIcon
+              style={{ marginBottom: 16 }}
+            />
+          )} */}
+
           {loading ? (
             <div style={{ textAlign: 'center', padding: 40 }}><Spin size="large" /></div>
           ) : (
-            <Table
-              columns={createColumns()}
-              dataSource={createTableData()}
-              bordered
-              size="small"
-              pagination={false}
-              scroll={{ x: 'max-content' }}
-              className="cra-monthly-table"
+            <div ref={tableScrollRef}>
+              <Table
+                columns={createColumns()}
+                dataSource={createTableData()}
+                bordered
+                size="small"
+                pagination={false}
+                scroll={{ x: 'max-content' }}
+                className="cra-monthly-table"
               rowClassName={(record) => {
                 if (record.isClientGroup) return 'client-group-header-row';
+                if (record.isAbsence) return 'absence-row';
                 if (record.isTotal) return 'grand-total-row';
                 return '';
               }}
-            />
+              />
+            </div>
           )}
 
           {renderLegend()}
@@ -1345,10 +1430,10 @@ const ConsultantCRA = () => {
           .client-group-header-row {
             background-color: #f0f7ff !important;
             font-weight: bold;
-          }absence-row {
+          }
+          .absence-row {
             background-color: #fff7e6 !important;
           }
-          .
           .grand-total-row {
             background-color: #e6f7ff !important;
             font-weight: bold;
@@ -1516,6 +1601,7 @@ const ConsultantCRA = () => {
               renderItem={entry => {
                 const project = projectsById[entry.id_bdc];
                 const client = clientsById[entry.id_client];
+                const isCancelled = entry.statut === 'Annulé';
 
                 return (
                   <List.Item
@@ -1523,6 +1609,7 @@ const ConsultantCRA = () => {
                       <Button size="small" onClick={() => editCraEntry(entry)}>Modifier</Button>,
                       <Button size="small" danger onClick={() => deleteCraEntry(entry.id_imputation)}>Supprimer</Button>
                     ]}
+                    style={isCancelled ? { backgroundColor: '#fff2f0', borderLeft: '3px solid #ff4d4f', paddingLeft: 12 } : {}}
                   >
                     <List.Item.Meta
                       title={
@@ -1531,13 +1618,19 @@ const ConsultantCRA = () => {
                             {entry.type_imputation}
                           </Tag>
                           <Text>{entry.Durée} jour(s)</Text>
+                          {isCancelled && <Tag color="red">Annulé par ESN</Tag>}
                         </Space>
                       }
                       description={
                         <>
                           <div>Client: {client?.name || 'N/A'}</div>
                           <div>Projet: {project?.project_title || 'N/A'}</div>
-                          {entry.commentaire && <div>Commentaire: {entry.commentaire}</div>}
+                          {isCancelled && entry.commentaire && (
+                            <div style={{ marginTop: 8, padding: '8px 12px', background: '#fff', borderRadius: 4, border: '1px solid #ffa39e' }}>
+                              <strong style={{ color: '#cf1322' }}>Motif d'annulation:</strong> {entry.commentaire}
+                            </div>
+                          )}
+                          {!isCancelled && entry.commentaire && <div>Commentaire: {entry.commentaire}</div>}
                         </>
                       }
                     />

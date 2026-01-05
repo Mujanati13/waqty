@@ -8,12 +8,13 @@ import {
   UserOutlined, ProjectOutlined, FileTextOutlined, 
   PlusOutlined, EditOutlined, DeleteOutlined,
   CheckCircleOutlined, ClockCircleOutlined, LogoutOutlined,
-  EyeOutlined, BarChartOutlined, CalendarOutlined, ReloadOutlined
+  EyeOutlined, BarChartOutlined, CalendarOutlined, ReloadOutlined,
+  CloseCircleOutlined
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { getEsnId, getUserName } from '../helper/auth';
 import { getConsultantsByESN, createConsultant, updateConsultant, deleteConsultant } from '../services/consultantService';
-import { getCRAsByESN, updateCRAStatus, CRA_STATUS } from '../services/craService';
+import { getCRAsByESN, updateCRAStatus, updateImputation, CRA_STATUS } from '../services/craService';
 import { createProject, getProjects, getProjectDetails, updateProjectConsultants, getProjectConsultants, addConsultantToProject, removeConsultantFromProject } from '../services/projectService';
 import { logout } from '../services/authService';
 
@@ -46,9 +47,12 @@ const ESNDashboard = () => {
   const [activityFilterType, setActivityFilterType] = useState(null);
   const [projectFilterStatus, setProjectFilterStatus] = useState(null);
   const [projectFilterDateRange, setProjectFilterDateRange] = useState(null);
+  const [cancelCRAModalVisible, setCancelCRAModalVisible] = useState(false);
+  const [pendingCancelEntries, setPendingCancelEntries] = useState([]);
   const [form] = Form.useForm();
   const [projectForm] = Form.useForm();
   const [editProjectForm] = Form.useForm();
+  const [cancelCRAForm] = Form.useForm();
   const [consultantAssignForm] = Form.useForm();
 
   const esnId = getEsnId();
@@ -268,6 +272,62 @@ const ESNDashboard = () => {
     }
   };
 
+  const handleOpenCancelModal = (entries) => {
+    setPendingCancelEntries(entries);
+    cancelCRAForm.resetFields();
+    setCancelCRAModalVisible(true);
+  };
+
+  const handleCancelCRA = async (values) => {
+    const { remarque } = values;
+    let successCount = 0;
+    let errorCount = 0;
+
+    for (const entry of pendingCancelEntries) {
+      const craId = entry.id_imputation || entry.ID_CRA;
+      
+      // Send full entry data with updated status and remark
+      // The API may require all fields for PUT request
+      const updateData = {
+        id_consultan: entry.id_consultan,
+        période: entry.période || entry.periode,
+        jour: entry.jour,
+        Durée: entry.Durée || entry.duree,
+        type_imputation: entry.type_imputation || entry.Type_imputation || 'Jour Travaillé',
+        type: entry.type || 'travail',
+        id_bdc: entry.id_bdc || 0,
+        id_client: entry.id_client || 0,
+        id_esn: entry.id_esn,
+        statut: CRA_STATUS.CANCELLED,
+        commentaire: remarque
+      };
+      
+      console.log('🚫 Cancelling CRA entry:', craId, updateData);
+      
+      const result = await updateImputation(craId, updateData);
+      console.log('🚫 Cancel result:', result);
+      
+      if (result.success) {
+        successCount++;
+      } else {
+        errorCount++;
+        console.error('Failed to cancel CRA:', result.error);
+      }
+    }
+
+    if (successCount > 0) {
+      message.warning(`${successCount} CRA(s) annulé(s) - Le consultant peut les modifier et renvoyer`);
+    }
+    if (errorCount > 0) {
+      message.error(`${errorCount} erreur(s) lors de l'annulation`);
+    }
+
+    setCancelCRAModalVisible(false);
+    setPendingCancelEntries([]);
+    cancelCRAForm.resetFields();
+    loadData();
+  };
+
   const handleCreateProject = () => {
     projectForm.resetFields();
     setProjectModalVisible(true);
@@ -403,6 +463,7 @@ const ESNDashboard = () => {
       case CRA_STATUS.ESN_VALIDATED: return 'warning';
       case CRA_STATUS.VALIDATED: return 'success';
       case CRA_STATUS.REJECTED: return 'error';
+      case CRA_STATUS.CANCELLED: return 'orange';
       default: return 'default';
     }
   };
@@ -414,6 +475,7 @@ const ESNDashboard = () => {
       case CRA_STATUS.ESN_VALIDATED: return 'Validé ESN';
       case CRA_STATUS.VALIDATED: return 'Validé Client';
       case CRA_STATUS.REJECTED: return 'Refusé';
+      case CRA_STATUS.CANCELLED: return 'Annulé';
       default: return status;
     }
   };
@@ -681,6 +743,16 @@ const ESNDashboard = () => {
   const pendingCras = Array.isArray(cras) ? cras.filter(c => c.statut === CRA_STATUS.SUBMITTED) : [];
   const validatedCras = Array.isArray(cras) ? cras.filter(c => c.statut === CRA_STATUS.VALIDATED || c.statut === CRA_STATUS.ESN_VALIDATED) : [];
 
+  // Count unique projects with pending CRAs
+  const pendingProjectIds = new Set();
+  pendingCras.forEach(cra => {
+    const projectId = cra.id_bdc || cra.project?.id;
+    if (projectId && projectId > 0) {
+      pendingProjectIds.add(projectId);
+    }
+  });
+  const pendingProjectsCount = pendingProjectIds.size;
+
   // Group CRAs by consultant and period
   const groupCRAsByConsultant = (craList) => {
     const groups = {};
@@ -839,6 +911,9 @@ const ESNDashboard = () => {
           }
         }
         
+        // When no projects exist at all, still group under projectId 0 ("Sans projet")
+        // projectId will remain 0 and entries will be grouped under "Sans projet"
+        
         // Look up project name from projects array - handle type mismatch (string vs number)
         const project = projects.find(p => String(p.id_bdc) === String(projectId));
         const projectName = project?.project_title || 
@@ -866,6 +941,7 @@ const ESNDashboard = () => {
         if (projectId === 0 && projects.length > 0) {
           projectId = projects[0].id_bdc;
         }
+        // When no projects exist, projectId stays 0 and groups under "Sans projet"
         const project = projects.find(p => String(p.id_bdc) === String(projectId));
         const projectName = project?.project_title || 
           cra.project?.project_title || 
@@ -961,7 +1037,27 @@ const ESNDashboard = () => {
       tableData.push(consultantRow);
     });
 
-    // Calculate totals for summary - use ALL CRAs, not just pending ones
+    // Calculate statistics for summary - based on projects and consultants
+    // Count unique projects with CRA entries in this period
+    const uniqueProjectIds = new Set();
+    allCras.forEach(cra => {
+      const projectId = cra.id_bdc || cra.project?.id;
+      if (projectId && projectId > 0) {
+        uniqueProjectIds.add(projectId);
+      }
+    });
+    const activeProjectsCount = uniqueProjectIds.size;
+    
+    // Count unique consultants with CRA entries in this period
+    const uniqueConsultantIds = new Set();
+    allCras.forEach(cra => {
+      const consultantId = cra.id_consultan || cra.consultantId;
+      if (consultantId) {
+        uniqueConsultantIds.add(consultantId);
+      }
+    });
+    const activeConsultantsCount = uniqueConsultantIds.size;
+    
     // Convert days to hours (1 day = 8 hours)
     const totalHours = allCras.reduce((sum, cra) => sum + (parseFloat(cra.Durée || 0) * 8), 0);
     const workDaysInMonth = Array.from({ length: daysInMonth }, (_, i) => {
@@ -1046,8 +1142,8 @@ const ESNDashboard = () => {
             total += dayEntries.reduce((sum, e) => sum + (parseFloat(e.Durée || 0) * 8), 0);
           }
           
-          // Display in hours only
-          let displayValue = '-';
+          // Display in hours only - show 0h when no entries instead of -
+          let displayValue = '0h';
           if (total > 0) {
             displayValue = total % 1 === 0 ? `${Math.floor(total)}h` : `${total.toFixed(1)}h`;
           }
@@ -1063,7 +1159,7 @@ const ESNDashboard = () => {
         title: 'Actions',
         key: 'actions',
         fixed: 'left',
-        width: 100,
+        width: 180,
         render: (_, record) => {
           // Don't show actions for header rows
           if (record.isConsultantHeader) {
@@ -1080,18 +1176,28 @@ const ESNDashboard = () => {
           }
           
           return (
-            <Button 
-              type="primary" 
-              size="small"
-              icon={<CheckCircleOutlined />}
-              onClick={() => {
-                pendingEntries.forEach(entry => {
-                  handleValidateCRA(entry.id_imputation || entry.ID_CRA);
-                });
-              }}
-            >
-              Valider
-            </Button>
+            <Space size="small">
+              <Button 
+                type="primary" 
+                size="small"
+                icon={<CheckCircleOutlined />}
+                onClick={() => {
+                  pendingEntries.forEach(entry => {
+                    handleValidateCRA(entry.id_imputation || entry.ID_CRA);
+                  });
+                }}
+              >
+                Valider
+              </Button>
+              <Button 
+                danger
+                size="small"
+                icon={<CloseCircleOutlined />}
+                onClick={() => handleOpenCancelModal(pendingEntries)}
+              >
+                Annuler
+              </Button>
+            </Space>
           );
         }
       }
@@ -1204,6 +1310,8 @@ const ESNDashboard = () => {
           }}>
             <Space split={<span style={{ color: '#d9d9d9' }}>|</span>}>
               <span><strong>Période:</strong> {selectedPeriod.format('MMMM YYYY')}</span>
+              <span><strong>Projets actifs:</strong> {activeProjectsCount}</span>
+              <span><strong>Consultants:</strong> {activeConsultantsCount}</span>
               <span><strong>Heures travaillées:</strong> {totalHours % 1 === 0 ? Math.floor(totalHours) : totalHours.toFixed(1)}h</span>
               <span><strong>Jours ouvrés:</strong> {workDaysInMonth}</span>
             </Space>
@@ -1299,7 +1407,7 @@ const ESNDashboard = () => {
       key: 'cras',
       label: (
         <span>
-          <FileTextOutlined /> CRA à valider ({pendingCras.length})
+          <FileTextOutlined /> CRA à valider ({pendingProjectsCount})
         </span>
       ),
       children: (
@@ -2046,6 +2154,66 @@ const ESNDashboard = () => {
           </Form>
         </div>
         )}
+      </Modal>
+
+      {/* Cancel CRA Modal */}
+      <Modal
+        title={
+          <Space>
+            <CloseCircleOutlined style={{ color: '#ff4d4f' }} />
+            <span>Annuler le CRA</span>
+          </Space>
+        }
+        open={cancelCRAModalVisible}
+        onCancel={() => {
+          setCancelCRAModalVisible(false);
+          setPendingCancelEntries([]);
+          cancelCRAForm.resetFields();
+        }}
+        footer={null}
+        width={500}
+      >
+        <div style={{ marginBottom: 16 }}>
+          <Text type="secondary">
+            Le CRA sera renvoyé au consultant pour modification. 
+            Veuillez indiquer la raison de l'annulation.
+          </Text>
+        </div>
+        <div style={{ marginBottom: 16, padding: '8px 12px', background: '#fff7e6', borderRadius: 4, border: '1px solid #ffd591' }}>
+          <Text>
+            <strong>{pendingCancelEntries.length}</strong> entrée(s) CRA sera/seront annulée(s)
+          </Text>
+        </div>
+        <Form
+          form={cancelCRAForm}
+          layout="vertical"
+          onFinish={handleCancelCRA}
+        >
+          <Form.Item
+            name="remarque"
+            label="Remarque / Motif d'annulation"
+            rules={[{ required: true, message: 'Veuillez indiquer le motif d\'annulation' }]}
+          >
+            <Input.TextArea 
+              rows={4} 
+              placeholder="Ex: Heures incorrectes, projet mal affecté, dates à corriger..."
+            />
+          </Form.Item>
+          <Form.Item style={{ marginBottom: 0, textAlign: 'right' }}>
+            <Space>
+              <Button onClick={() => {
+                setCancelCRAModalVisible(false);
+                setPendingCancelEntries([]);
+                cancelCRAForm.resetFields();
+              }}>
+                Fermer
+              </Button>
+              <Button type="primary" danger htmlType="submit" icon={<CloseCircleOutlined />}>
+                Confirmer l'annulation
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
       </Modal>
 
       {/* Consultant Activity Modal */}

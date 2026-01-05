@@ -325,6 +325,7 @@ export const CRA_STATUS = {
   ESN_VALIDATED: 'EVC', // En Validation Client (validated by ESN)
   VALIDATED: 'Validé',
   REJECTED: 'Refusé',
+  CANCELLED: 'Annulé', // Cancelled by ESN with remark, consultant can resubmit
 };
 
 export default {
