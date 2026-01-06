@@ -7,11 +7,10 @@ import { PROJECT_ENDPOINTS } from '../helper/endpoint';
  * @param {number} projectData.esn_id - ESN ID
  * @param {number} projectData.consultant_id - Consultant ID
  * @param {string} projectData.project_title - Project title
- * @param {number} projectData.tjm - Daily rate (TJM)
+ * @param {number} projectData.budget - Project budget (total amount)
  * @param {string} projectData.date_debut - Start date (YYYY-MM-DD)
  * @param {string} projectData.date_fin - End date (YYYY-MM-DD)
  * @param {string} projectData.description - Project description (optional)
- * @param {number} projectData.montant_total - Total amount (optional)
  * @param {number} projectData.jours - Number of days (optional)
  */
 export const createProject = async (projectData) => {

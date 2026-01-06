@@ -2121,10 +2121,43 @@ def Bondecommande_view(request, id=0):
                 bdc_data['responsable_compte'] = candidature.responsable_compte
                 bdc_data['commercial_id'] = candidature.commercial_id
                 bdc_data['tjm'] = candidature.tjm
+                bdc_data['budget'] = bdc_data.get('montant_total', 0)  # Expose montant_total as budget
+                
+                # Calculate consumed days for this project
+                # Prévisionnelle: CRAs submitted by consultants (EVP status and validated)
+                # Réelle: Only VALIDATED CRAs
+                try:
+                    # Get AppelOffre ID for this BDC (for backwards compatibility with CRAs stored with AO ID)
+                    ao_id = candidature.AO_id
+                    
+                    # Get all CRAs for this project - check both BDC ID and AppelOffre ID
+                    # (Some CRAs may have been stored with AppelOffre ID instead of BDC ID)
+                    from django.db.models import Q
+                    all_cras = CRA_imputation.objects.filter(
+                        Q(id_bdc=bdc_data['id_bdc']) | Q(id_bdc=ao_id)
+                    )
+                    
+                    # Prévisionnelle: À saisir + a_saisir + EVP (all planned/submitted CRAs)
+                    previsional_statuses = ['À saisir', 'a_saisir', 'EVP']
+                    previsional_cras = all_cras.filter(statut__in=previsional_statuses)
+                    jours_previsionnels = sum(float(cra.Durée or 0) for cra in previsional_cras)
+                    
+                    # Réelle: only validated CRAs
+                    validated_cras = all_cras.filter(statut__in=['Validé'])
+                    jours_reels = sum(float(cra.Durée or 0) for cra in validated_cras)
+                    
+                    bdc_data['jours_consommes_previsionnels'] = jours_previsionnels
+                    bdc_data['jours_consommes_reels'] = jours_reels
+                except Exception as e:
+                    bdc_data['jours_consommes_previsionnels'] = 0
+                    bdc_data['jours_consommes_reels'] = 0
                 
             except (Candidature.DoesNotExist, AppelOffre.DoesNotExist):
                 # Si les données liées ne sont pas trouvées, continuer sans le titre du projet
                 bdc_data['project_title'] = f"Projet BDC-{bdc_data['id_bdc']}"
+                bdc_data['budget'] = bdc_data.get('montant_total', 0)  # Expose montant_total as budget
+                bdc_data['jours_consommes_previsionnels'] = 0
+                bdc_data['jours_consommes_reels'] = 0
             
             data.append(bdc_data)
             # Ajoute chaque bon de commande enrichi à la liste `data`.
@@ -6499,9 +6532,20 @@ def get_projects_by_consultant(request, consultant_id):
                     candidature_serializer = CandidatureSerializer(candidature)
                     candidature_data = candidature_serializer.data
                     
-                    # Get BDC for this candidature
+                    # Get BDC for this project (AppelOffre)
+                    # First try the consultant's own candidature, then look for any BDC linked to this project
                     try:
                         bdc = Bondecommande.objects.filter(candidature_id=candidature.id_cd).first()
+                        
+                        # If no BDC found for this candidature, look for any BDC linked to this AppelOffre
+                        if not bdc:
+                            # Find any candidature for this AppelOffre that has a BDC
+                            all_project_candidatures = Candidature.objects.filter(AO_id=project['id'])
+                            for proj_cand in all_project_candidatures:
+                                bdc = Bondecommande.objects.filter(candidature_id=proj_cand.id_cd).first()
+                                if bdc:
+                                    break
+                        
                         if bdc:
                             bdc_serializer = BondecommandeSerializer(bdc)
                             bdc_data = bdc_serializer.data
@@ -15137,20 +15181,25 @@ def esn_create_project(request):
             esn_id = int(data.get('esn_id')) if data.get('esn_id') else None
             consultant_id = int(data.get('consultant_id')) if data.get('consultant_id') else None
             project_title = data.get('project_title')
-            tjm = data.get('tjm')
+            budget = data.get('budget')  # Budget total du projet
             date_debut = data.get('date_debut')
             date_fin = data.get('date_fin')
             
             # Optional fields
             description = data.get('description', '')
-            montant_total = data.get('montant_total')
             jours = data.get('jours')
             
+            # Calculate TJM from budget and days
+            if budget and jours and float(jours) > 0:
+                tjm = float(budget) / float(jours)
+            else:
+                tjm = 0
+            
             # Validate required fields
-            if not all([esn_id, project_title, tjm, date_debut, date_fin]):
+            if not all([esn_id, project_title, budget, date_debut, date_fin]):
                 return JsonResponse({
                     "status": False,
-                    "message": "Missing required fields: esn_id, project_title, tjm, date_debut, date_fin"
+                    "message": "Missing required fields: esn_id, project_title, budget, date_debut, date_fin"
                 }, status=400)
             
             # Verify ESN exists
@@ -15238,11 +15287,8 @@ def esn_create_project(request):
             from .views import generate_bdc_numero
             bdc_numero = generate_bdc_numero(esn_id, esn_id)
             
-            # Calculate montant_total if not provided
-            if not montant_total and jours and tjm:
-                montant_total = float(jours) * float(tjm)
-            elif not montant_total:
-                montant_total = 0
+            # Use budget as montant_total
+            montant_total = float(budget) if budget else 0
             
             # Create Bondecommande (the actual project/contract)
             bdc = Bondecommande.objects.create(
@@ -15343,8 +15389,12 @@ def esn_update_project_consultants(request, bdc_id):
             if 'description' in data:
                 appel_offre.description = data['description']
                 bdc.description = data['description']
-            if 'tjm' in data:
-                tjm_value = float(data['tjm'])
+            if 'budget' in data:
+                budget_value = float(data['budget'])
+                bdc.montant_total = budget_value
+                # Calculate TJM from budget and jours
+                jours_value = int(data['jours']) if 'jours' in data else (bdc.jours or 1)
+                tjm_value = budget_value / jours_value if jours_value > 0 else 0
                 candidature.tjm = tjm_value
                 bdc.TJM = tjm_value
                 appel_offre.tjm_min = str(tjm_value)
@@ -15359,13 +15409,16 @@ def esn_update_project_consultants(request, bdc_id):
             if 'jours' in data:
                 bdc.jours = int(data['jours'])
                 appel_offre.jours = int(data['jours'])
+                # Recalculate TJM if budget exists
+                if 'budget' in data:
+                    budget_value = float(data['budget'])
+                    jours_value = int(data['jours'])
+                    tjm_value = budget_value / jours_value if jours_value > 0 else 0
+                    candidature.tjm = tjm_value
+                    bdc.TJM = tjm_value
             if 'status' in data:
                 bdc.statut = data['status']
                 appel_offre.statut = data['status']  # Fixed: use 'statut' not 'status'
-            
-            # Recalculate montant_total if tjm or jours changed
-            if 'tjm' in data or 'jours' in data:
-                bdc.montant_total = float(bdc.TJM) * float(bdc.jours if bdc.jours else 0)
             
             # Update consultant if provided
             consultant_ids = data.get('consultant_ids', [])
@@ -15446,6 +15499,7 @@ def esn_update_project_consultants(request, bdc_id):
                     "consultant_id": candidature.id_consultant,
                     "consultant_name": f"{consultant.Nom} {consultant.Prenom}",
                     "tjm": float(bdc.TJM),
+                    "budget": float(bdc.montant_total),
                     "date_debut": str(bdc.date_debut) if bdc.date_debut else None,
                     "date_fin": str(bdc.date_fin) if bdc.date_fin else None,
                     "jours": bdc.jours,

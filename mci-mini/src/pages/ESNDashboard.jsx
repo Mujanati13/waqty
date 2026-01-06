@@ -340,11 +340,10 @@ const ESNDashboard = () => {
         consultant_id: null,
         project_title: values.project_title,
         description: values.description || '',
-        tjm: values.tjm,
+        budget: values.budget,
         date_debut: values.date_debut.format('YYYY-MM-DD'),
         date_fin: values.date_fin.format('YYYY-MM-DD'),
         jours: values.jours,
-        montant_total: values.jours * values.tjm,
       };
 
       const result = await createProject(projectData);
@@ -376,7 +375,7 @@ const ESNDashboard = () => {
       editProjectForm.setFieldsValue({
         project_title: projectData.project_title || project.project_title,
         description: projectData.description || '',
-        tjm: projectData.tjm || project.tjm,
+        budget: projectData.budget || project.budget,
         jours: projectData.jours || project.jours,
         date_debut: projectData.date_debut ? dayjs(projectData.date_debut) : (project.date_debut ? dayjs(project.date_debut) : null),
         date_fin: projectData.date_fin ? dayjs(projectData.date_fin) : (project.date_fin ? dayjs(project.date_fin) : null),
@@ -388,7 +387,7 @@ const ESNDashboard = () => {
       editProjectForm.setFieldsValue({
         project_title: project.project_title,
         description: project.description || '',
-        tjm: project.tjm,
+        budget: project.budget,
         jours: project.jours,
         date_debut: project.date_debut ? dayjs(project.date_debut) : null,
         date_fin: project.date_fin ? dayjs(project.date_fin) : null,
@@ -405,7 +404,7 @@ const ESNDashboard = () => {
         esn_id: esnId,
         project_title: values.project_title,
         description: values.description || '',
-        tjm: values.tjm,
+        budget: values.budget,
         date_debut: values.date_debut.format('YYYY-MM-DD'),
         date_fin: values.date_fin.format('YYYY-MM-DD'),
         jours: values.jours,
@@ -435,7 +434,7 @@ const ESNDashboard = () => {
         esn_id: esnId,
         project_title: project.project_title,
         description: project.description || '',
-        tjm: project.tjm,
+        budget: project.budget,
         date_debut: project.date_debut,
         date_fin: project.date_fin,
         jours: project.jours,
@@ -656,10 +655,94 @@ const ESNDashboard = () => {
       render: (val) => val ? dayjs(val).format('DD/MM/YYYY') : '-',
     },
     {
-      title: 'TJM',
-      dataIndex: 'tjm',
-      key: 'tjm',
+      title: 'Budget',
+      dataIndex: 'budget',
+      key: 'budget',
       render: (val) => val ? `${val} €` : '-',
+    },
+    {
+      title: 'Consommation prévisionnelle',
+      key: 'consommation_previsionnelle',
+      width: 200,
+      render: (_, record) => {
+        const budget = parseFloat(record.budget || record.montant_total || 0);
+        if (budget === 0) return '-';
+
+        // Use pre-calculated consumed days from backend
+        const totalDays = parseFloat(record.jours_consommes_previsionnels || 0);
+        const plannedDays = parseFloat(record.jours || 1);
+        
+        // Calculate consumed budget: (consumed_days / planned_days) * budget
+        const consumedBudget = (totalDays / plannedDays) * budget;
+        const percentage = (consumedBudget / budget) * 100;
+
+        let color = '#52c41a'; // green
+        if (percentage >= 100) {
+          color = '#ff4d4f'; // red
+        } else if (percentage >= 80) {
+          color = '#faad14'; // orange
+        }
+
+        return (
+          <Tooltip title={`${consumedBudget.toFixed(0)} € / ${budget} € (${totalDays.toFixed(1)} jours)`}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Progress 
+                percent={Math.min(percentage, 100)} 
+                strokeColor={color}
+                size="small"
+                style={{ width: '80px', minWidth: '80px' }}
+                strokeWidth={8}
+                showInfo={false}
+              />
+              <span style={{ color, fontWeight: '500', fontSize: '12px' }}>
+                {percentage.toFixed(0)}%
+              </span>
+            </div>
+          </Tooltip>
+        );
+      },
+    },
+    {
+      title: 'Consommation réelle',
+      key: 'consommation_reelle',
+      width: 200,
+      render: (_, record) => {
+        const budget = parseFloat(record.budget || record.montant_total || 0);
+        if (budget === 0) return '-';
+
+        // Use pre-calculated validated consumed days from backend
+        const totalDays = parseFloat(record.jours_consommes_reels || 0);
+        const plannedDays = parseFloat(record.jours || 1);
+        
+        // Calculate consumed budget
+        const consumedBudget = (totalDays / plannedDays) * budget;
+        const percentage = (consumedBudget / budget) * 100;
+
+        let color = '#52c41a'; // green
+        if (percentage >= 100) {
+          color = '#ff4d4f'; // red
+        } else if (percentage >= 80) {
+          color = '#faad14'; // orange
+        }
+
+        return (
+          <Tooltip title={`${consumedBudget.toFixed(0)} € / ${budget} € (${totalDays.toFixed(1)} jours validés)`}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Progress 
+                percent={Math.min(percentage, 100)} 
+                strokeColor={color}
+                size="small"
+                style={{ width: '80px', minWidth: '80px' }}
+                strokeWidth={8}
+                showInfo={false}
+              />
+              <span style={{ color, fontWeight: '500', fontSize: '12px' }}>
+                {percentage.toFixed(0)}%
+              </span>
+            </div>
+          </Tooltip>
+        );
+      },
     },
     {
       title: 'Statut',
@@ -1512,12 +1595,12 @@ const ESNDashboard = () => {
       key: 'consultant-assignment',
       label: (
         <span>
-          <UserOutlined /> Gestion des consultants
+          <ProjectOutlined /> Missions
         </span>
       ),
       children: (
         <Card>
-          <Title level={5} style={{ marginBottom: 16 }}>Assigner des consultants aux projets</Title>
+          <Title level={5} style={{ marginBottom: 16 }}>Gestion des missions</Title>
           
           <Table
             columns={[
@@ -1525,6 +1608,19 @@ const ESNDashboard = () => {
                 title: 'Projet',
                 dataIndex: 'project_title',
                 key: 'project_title',
+              },
+              {
+                title: 'Statut',
+                dataIndex: 'status',
+                key: 'status',
+                render: (status) => {
+                  const currentStatus = status || 'En cours';
+                  let color = 'blue';
+                  if (currentStatus === 'Terminé') color = 'green';
+                  else if (currentStatus === 'En pause') color = 'orange';
+                  else if (currentStatus === 'Annulé') color = 'red';
+                  return <Tag color={color}>{currentStatus}</Tag>;
+                },
               },
               {
                 title: 'Nombre de jours',
@@ -1759,20 +1855,22 @@ const ESNDashboard = () => {
           </Form.Item>
 
           <Row gutter={16}>
-            <Col span={8}>
+            <Col span={12}>
               <Form.Item
-                name="tjm"
-                label="TJM (€)"
-                rules={[{ required: true, message: 'TJM requis' }]}
+                name="budget"
+                label="Budget (€)"
+                rules={[{ required: true, message: 'Budget requis' }]}
               >
                 <InputNumber
                   min={0}
                   style={{ width: '100%' }}
-                  placeholder="500"
+                  placeholder="10000"
+                  formatter={value => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ' ')}
+                  parser={value => value.replace(/\s/g, '')}
                 />
               </Form.Item>
             </Col>
-            <Col span={8}>
+            <Col span={12}>
               <Form.Item
                 name="jours"
                 label="Nombre de jours"
@@ -1783,27 +1881,6 @@ const ESNDashboard = () => {
                   style={{ width: '100%' }}
                   placeholder="20"
                 />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item
-                label="Montant total (€)"
-              >
-                <Form.Item noStyle shouldUpdate={(prev, curr) => prev.tjm !== curr.tjm || prev.jours !== curr.jours}>
-                  {({ getFieldValue }) => {
-                    const tjm = getFieldValue('tjm') || 0;
-                    const jours = getFieldValue('jours') || 0;
-                    const total = tjm * jours;
-                    return (
-                      <InputNumber
-                        value={total}
-                        disabled
-                        style={{ width: '100%' }}
-                        formatter={value => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ' ')}
-                      />
-                    );
-                  }}
-                </Form.Item>
               </Form.Item>
             </Col>
           </Row>
@@ -1886,20 +1963,22 @@ const ESNDashboard = () => {
           </Form.Item>
 
           <Row gutter={16}>
-            <Col span={8}>
+            <Col span={12}>
               <Form.Item
-                name="tjm"
-                label="TJM (€)"
-                rules={[{ required: true, message: 'TJM requis' }]}
+                name="budget"
+                label="Budget (€)"
+                rules={[{ required: true, message: 'Budget requis' }]}
               >
                 <InputNumber
                   min={0}
                   style={{ width: '100%' }}
-                  placeholder="500"
+                  placeholder="10000"
+                  formatter={value => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ' ')}
+                  parser={value => value.replace(/\s/g, '')}
                 />
               </Form.Item>
             </Col>
-            <Col span={8}>
+            <Col span={12}>
               <Form.Item
                 name="jours"
                 label="Nombre de jours"
@@ -1910,27 +1989,6 @@ const ESNDashboard = () => {
                   style={{ width: '100%' }}
                   placeholder="20"
                 />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item
-                label="Montant total (€)"
-              >
-                <Form.Item noStyle shouldUpdate={(prev, curr) => prev.tjm !== curr.tjm || prev.jours !== curr.jours}>
-                  {({ getFieldValue }) => {
-                    const tjm = getFieldValue('tjm') || 0;
-                    const jours = getFieldValue('jours') || 0;
-                    const total = tjm * jours;
-                    return (
-                      <InputNumber
-                        value={total}
-                        disabled
-                        style={{ width: '100%' }}
-                        formatter={value => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ' ')}
-                      />
-                    );
-                  }}
-                </Form.Item>
               </Form.Item>
             </Col>
           </Row>
