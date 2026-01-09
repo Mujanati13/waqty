@@ -2123,9 +2123,10 @@ def Bondecommande_view(request, id=0):
                 bdc_data['tjm'] = candidature.tjm
                 bdc_data['budget'] = bdc_data.get('montant_total', 0)  # Expose montant_total as budget
                 
-                # Calculate consumed days for this project
+                # Calculate consumed days and budget for this project
                 # Prévisionnelle: CRAs submitted by consultants (EVP status and validated)
                 # Réelle: Only VALIDATED CRAs
+                # Budget consumption is calculated per consultant using their specific TJM
                 try:
                     # Get AppelOffre ID for this BDC (for backwards compatibility with CRAs stored with AO ID)
                     ao_id = candidature.AO_id
@@ -2137,20 +2138,53 @@ def Bondecommande_view(request, id=0):
                         Q(id_bdc=bdc_data['id_bdc']) | Q(id_bdc=ao_id)
                     )
                     
+                    # Build a TJM lookup per consultant from candidatures
+                    # Get all candidatures for this project
+                    project_candidatures = Candidature.objects.filter(
+                        AO_id=ao_id,
+                        esn_id=candidature.esn_id
+                    )
+                    consultant_tjm_map = {}
+                    for cand in project_candidatures:
+                        consultant_tjm_map[cand.id_consultant] = float(cand.tjm) if cand.tjm else 0
+                    
+                    # Default TJM from BDC if consultant not found
+                    default_tjm = float(bdc_data.get('TJM', 0) or candidature.tjm or 0)
+                    
                     # Prévisionnelle: À saisir + a_saisir + EVP (all planned/submitted CRAs)
                     previsional_statuses = ['À saisir', 'a_saisir', 'EVP']
                     previsional_cras = all_cras.filter(statut__in=previsional_statuses)
                     jours_previsionnels = sum(float(cra.Durée or 0) for cra in previsional_cras)
                     
+                    # Calculate budget consumption using per-consultant TJM
+                    montant_previsionnel = 0
+                    for cra in previsional_cras:
+                        cra_days = float(cra.Durée or 0)
+                        cra_consultant_id = cra.id_consultan
+                        cra_tjm = consultant_tjm_map.get(cra_consultant_id, default_tjm)
+                        montant_previsionnel += cra_days * cra_tjm
+                    
                     # Réelle: only validated CRAs
                     validated_cras = all_cras.filter(statut__in=['Validé'])
                     jours_reels = sum(float(cra.Durée or 0) for cra in validated_cras)
                     
+                    # Calculate validated budget consumption using per-consultant TJM
+                    montant_reel = 0
+                    for cra in validated_cras:
+                        cra_days = float(cra.Durée or 0)
+                        cra_consultant_id = cra.id_consultan
+                        cra_tjm = consultant_tjm_map.get(cra_consultant_id, default_tjm)
+                        montant_reel += cra_days * cra_tjm
+                    
                     bdc_data['jours_consommes_previsionnels'] = jours_previsionnels
                     bdc_data['jours_consommes_reels'] = jours_reels
+                    bdc_data['montant_consomme_previsionnel'] = montant_previsionnel
+                    bdc_data['montant_consomme_reel'] = montant_reel
                 except Exception as e:
                     bdc_data['jours_consommes_previsionnels'] = 0
                     bdc_data['jours_consommes_reels'] = 0
+                    bdc_data['montant_consomme_previsionnel'] = 0
+                    bdc_data['montant_consomme_reel'] = 0
                 
             except (Candidature.DoesNotExist, AppelOffre.DoesNotExist):
                 # Si les données liées ne sont pas trouvées, continuer sans le titre du projet
@@ -2158,6 +2192,8 @@ def Bondecommande_view(request, id=0):
                 bdc_data['budget'] = bdc_data.get('montant_total', 0)  # Expose montant_total as budget
                 bdc_data['jours_consommes_previsionnels'] = 0
                 bdc_data['jours_consommes_reels'] = 0
+                bdc_data['montant_consomme_previsionnel'] = 0
+                bdc_data['montant_consomme_reel'] = 0
             
             data.append(bdc_data)
             # Ajoute chaque bon de commande enrichi à la liste `data`.
@@ -15545,6 +15581,10 @@ def esn_project_consultants(request, bdc_id):
             ao_id = candidature.AO_id
             esn_id = candidature.esn_id
             
+            # Get BDC's default jours and TJM for primary consultant fallback
+            bdc_jours = bdc.jours if bdc.jours else None
+            bdc_tjm = float(bdc.TJM) if bdc.TJM else None
+            
             # Get all candidatures for this AppelOffre from this ESN
             all_candidatures = Candidature.objects.filter(
                 AO_id=ao_id,
@@ -15555,13 +15595,42 @@ def esn_project_consultants(request, bdc_id):
             for cand in all_candidatures:
                 try:
                     consultant = Collaborateur.objects.get(ID_collab=cand.id_consultant)
+                    # Parse role from commentaire field (stored as "role:RoleName" or in comment)
+                    role = None
+                    jours = None
+                    if cand.commentaire:
+                        import re
+                        # Try to extract role from commentaire
+                        role_match = re.search(r'role:([^|]+)', cand.commentaire)
+                        if role_match:
+                            role = role_match.group(1).strip()
+                        # Try to extract jours from commentaire
+                        jours_match = re.search(r'jours:(\d+)', cand.commentaire)
+                        if jours_match:
+                            jours = int(jours_match.group(1))
+                    
+                    # Check if this is the primary consultant
+                    is_primary = cand.id_cd == bdc.candidature_id
+                    
+                    # Get TJM - from candidature or BDC for primary
+                    tjm = float(cand.tjm) if cand.tjm else None
+                    if tjm is None and is_primary:
+                        tjm = bdc_tjm
+                    
+                    # Get jours - from commentaire or BDC for primary
+                    if jours is None and is_primary:
+                        jours = bdc_jours
+                    
                     consultants_list.append({
                         'id_consultant': consultant.ID_collab,
                         'nom': consultant.Nom,
                         'prenom': consultant.Prenom,
                         'email': consultant.email,
                         'candidature_id': cand.id_cd,
-                        'is_primary': cand.id_cd == bdc.candidature_id
+                        'is_primary': is_primary,
+                        'tjm': tjm,
+                        'role': role,
+                        'jours': jours
                     })
                 except Collaborateur.DoesNotExist:
                     continue
@@ -15586,6 +15655,9 @@ def esn_project_consultants(request, bdc_id):
             data = JSONParser().parse(request)
             esn_id = int(data.get('esn_id')) if data.get('esn_id') else None
             consultant_id = int(data.get('consultant_id')) if data.get('consultant_id') else None
+            tjm = data.get('tjm')  # TJM specific to this consultant on this project
+            role = data.get('role')  # Role on this project
+            jours = data.get('jours')  # Number of days allocated
             
             if not esn_id or not consultant_id:
                 return JsonResponse({
@@ -15640,16 +15712,23 @@ def esn_project_consultants(request, bdc_id):
                 }, status=400)
             
             # Create new candidature for this consultant
+            # Build commentaire with role and jours info for later retrieval
+            commentaire_parts = ["Additional consultant assigned to project"]
+            if role:
+                commentaire_parts.append(f"role:{role}")
+            if jours:
+                commentaire_parts.append(f"jours:{jours}")
+            
             new_candidature = Candidature.objects.create(
                 AO_id=main_candidature.AO_id,
                 esn_id=esn_id,
                 id_consultant=consultant_id,
                 date_candidature=datetime.datetime.now().date(),
                 statut='Sélectionnée',
-                tjm=main_candidature.tjm,
+                tjm=tjm if tjm else main_candidature.tjm,
                 date_disponibilite=main_candidature.date_disponibilite,
                 responsable_compte=f"{consultant.Nom} {consultant.Prenom}",
-                commentaire=f"Additional consultant assigned to project"
+                commentaire="|".join(commentaire_parts)
             )
             
             return JsonResponse({
@@ -15658,7 +15737,10 @@ def esn_project_consultants(request, bdc_id):
                 "data": {
                     "candidature_id": new_candidature.id_cd,
                     "consultant_id": consultant_id,
-                    "consultant_name": f"{consultant.Nom} {consultant.Prenom}"
+                    "consultant_name": f"{consultant.Nom} {consultant.Prenom}",
+                    "tjm": float(new_candidature.tjm) if new_candidature.tjm else None,
+                    "role": role,
+                    "jours": jours
                 }
             }, status=201)
             

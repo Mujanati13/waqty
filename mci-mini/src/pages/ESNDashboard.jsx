@@ -29,8 +29,10 @@ const ESNDashboard = () => {
   const [modalVisible, setModalVisible] = useState(false);
   const [projectModalVisible, setProjectModalVisible] = useState(false);
   const [editProjectModalVisible, setEditProjectModalVisible] = useState(false);
+  const [viewProjectModalVisible, setViewProjectModalVisible] = useState(false);
   const [editingConsultant, setEditingConsultant] = useState(null);
   const [editingProject, setEditingProject] = useState(null);
+  const [viewingProject, setViewingProject] = useState(null);
   const [selectedPeriod, setSelectedPeriod] = useState(dayjs());
   const [selectedProjectForConsultant, setSelectedProjectForConsultant] = useState(null);
   const [projectConsultants, setProjectConsultants] = useState([]);
@@ -47,6 +49,9 @@ const ESNDashboard = () => {
   const [activityFilterType, setActivityFilterType] = useState(null);
   const [projectFilterStatus, setProjectFilterStatus] = useState(null);
   const [projectFilterDateRange, setProjectFilterDateRange] = useState(null);
+  const [selectedConsultantStats, setSelectedConsultantStats] = useState(null);
+  const [consultantStatsLoading, setConsultantStatsLoading] = useState(false);
+  const [consultantProjectCras, setConsultantProjectCras] = useState([]);
   const [cancelCRAModalVisible, setCancelCRAModalVisible] = useState(false);
   const [pendingCancelEntries, setPendingCancelEntries] = useState([]);
   const [form] = Form.useForm();
@@ -361,6 +366,20 @@ const ESNDashboard = () => {
     }
   };
 
+  const handleViewProject = async (project) => {
+    console.log('Viewing project:', project);
+    setViewingProject(project);
+    
+    // Load full project details
+    const result = await getProjectDetails(project.id_bdc);
+    if (result.success && result.data) {
+      setViewingProject(result.data);
+    } else {
+      setViewingProject(project);
+    }
+    setViewProjectModalVisible(true);
+  };
+
   const handleEditProject = async (project) => {
     console.log('Editing project:', project);
     setEditingProject(project);
@@ -668,13 +687,13 @@ const ESNDashboard = () => {
         const budget = parseFloat(record.budget || record.montant_total || 0);
         if (budget === 0) return '-';
 
-        // Use pre-calculated consumed days from backend
+        // Use pre-calculated consumed budget from backend (TJM-based)
+        // If montant_consomme_previsionnel is available, use it; otherwise fallback to days calculation
         const totalDays = parseFloat(record.jours_consommes_previsionnels || 0);
-        const plannedDays = parseFloat(record.jours || 1);
+        const consumedBudget = parseFloat(record.montant_consomme_previsionnel || 0) || 
+          (totalDays * parseFloat(record.tjm_moyen || record.budget / record.jours || 0));
         
-        // Calculate consumed budget: (consumed_days / planned_days) * budget
-        const consumedBudget = (totalDays / plannedDays) * budget;
-        const percentage = (consumedBudget / budget) * 100;
+        const percentage = budget > 0 ? (consumedBudget / budget) * 100 : 0;
 
         let color = '#52c41a'; // green
         if (percentage >= 100) {
@@ -710,13 +729,13 @@ const ESNDashboard = () => {
         const budget = parseFloat(record.budget || record.montant_total || 0);
         if (budget === 0) return '-';
 
-        // Use pre-calculated validated consumed days from backend
+        // Use pre-calculated validated consumed budget from backend (TJM-based)
+        // If montant_consomme_reel is available, use it; otherwise fallback to days calculation
         const totalDays = parseFloat(record.jours_consommes_reels || 0);
-        const plannedDays = parseFloat(record.jours || 1);
+        const consumedBudget = parseFloat(record.montant_consomme_reel || 0) || 
+          (totalDays * parseFloat(record.tjm_moyen || record.budget / record.jours || 0));
         
-        // Calculate consumed budget
-        const consumedBudget = (totalDays / plannedDays) * budget;
-        const percentage = (consumedBudget / budget) * 100;
+        const percentage = budget > 0 ? (consumedBudget / budget) * 100 : 0;
 
         let color = '#52c41a'; // green
         if (percentage >= 100) {
@@ -778,6 +797,13 @@ const ESNDashboard = () => {
       key: 'actions',
       render: (_, record) => (
         <Space>
+          <Button 
+            type="link" 
+            icon={<EyeOutlined />}
+            onClick={() => handleViewProject(record)}
+          >
+            Voir
+          </Button>
           <Button 
             type="link" 
             icon={<EditOutlined />}
@@ -907,12 +933,9 @@ const ESNDashboard = () => {
         absenceTypes.map(t => t.toLowerCase()).includes(typeImputation.toLowerCase());
     };
     
-    // Filter: Work entries need EVP or Validated status, Absences appear always
+    // Filter: Both work entries AND absences need EVP or Validated status to appear
     const allCras = allCrasRaw.filter(cra => {
-      if (isAbsenceType(cra)) {
-        return true; // Show all absences regardless of status
-      }
-      // Show both pending (EVP) and validated entries
+      // Show both pending (EVP) and validated entries for ALL types (work and absences)
       return cra.statut === CRA_STATUS.SUBMITTED || 
              cra.statut === CRA_STATUS.VALIDATED || 
              cra.statut === CRA_STATUS.ESN_VALIDATED ||
@@ -921,7 +944,19 @@ const ESNDashboard = () => {
              cra.statut === 'VC';
     });
     
-    console.log('📅 Filtered CRAs (EVP + Validated work + all absences):', allCras.length, 'out of', cras.length);
+    console.log('📅 Filtered CRAs (EVP + Validated for all types including absences):', allCras.length, 'out of', cras.length);
+    console.log('📅 Raw CRAs breakdown:', {
+      total: cras.length,
+      evp: cras.filter(c => c.statut === CRA_STATUS.SUBMITTED).length,
+      validated: cras.filter(c => c.statut === CRA_STATUS.VALIDATED || c.statut === 'Validé').length,
+      aSaisir: cras.filter(c => c.statut === 'À saisir').length,
+      other: cras.filter(c => !['EVP', 'Validé', 'VE', 'VC', 'À saisir'].includes(c.statut)).length
+    });
+    console.log('📅 Absence entries in raw CRAs:', cras.filter(c => {
+      const typeImputation = c.type_imputation || c.Type_imputation || '';
+      const craType = c.type || c.Type || '';
+      return craType.toLowerCase() === 'absence' || absenceTypes.includes(typeImputation);
+    }).map(c => ({ type_imputation: c.type_imputation, type: c.type, statut: c.statut, jour: c.jour })));
     
     const consultantGroups = {};
     allCras.forEach(cra => {
@@ -1691,7 +1726,12 @@ const ESNDashboard = () => {
                 ),
               },
             ]}
-            dataSource={projects}
+            dataSource={[...projects].sort((a, b) => {
+              // Sort by most recent date_debut (descending order)
+              const dateA = a.date_debut ? dayjs(a.date_debut) : dayjs(0);
+              const dateB = b.date_debut ? dayjs(b.date_debut) : dayjs(0);
+              return dateB.valueOf() - dateA.valueOf();
+            })}
             rowKey="id_bdc"
             loading={loading}
             pagination={{ pageSize: 10 }}
@@ -1917,6 +1957,149 @@ const ESNDashboard = () => {
         </Form>
       </Modal>
 
+      {/* View Project Details Modal */}
+      <Modal
+        title={
+          <Space>
+            <ProjectOutlined />
+            <span>Détails du projet</span>
+          </Space>
+        }
+        open={viewProjectModalVisible}
+        onCancel={() => {
+          setViewProjectModalVisible(false);
+          setViewingProject(null);
+        }}
+        footer={
+          <Space>
+            <Button onClick={() => {
+              setViewProjectModalVisible(false);
+              setViewingProject(null);
+            }}>
+              Fermer
+            </Button>
+            <Button 
+              type="primary" 
+              icon={<EditOutlined />}
+              onClick={() => {
+                setViewProjectModalVisible(false);
+                handleEditProject(viewingProject);
+              }}
+            >
+              Modifier
+            </Button>
+          </Space>
+        }
+        width={900}
+      >
+        {viewingProject && (
+          <Space direction="vertical" style={{ width: '100%' }} size="large">
+            {/* Project Header */}
+            <Card size="small" style={{ background: '#f0f2f5' }}>
+              <Title level={4} style={{ marginBottom: 16 }}>{viewingProject.project_title}</Title>
+              {viewingProject.description && (
+                <Text type="secondary">{viewingProject.description}</Text>
+              )}
+            </Card>
+
+            {/* Project Status and Dates */}
+            <Row gutter={16}>
+              <Col span={12}>
+                <Card size="small" title="Statut du projet">
+                  <Tag 
+                    color={viewingProject.status === 'En cours' ? 'blue' : 
+                           viewingProject.status === 'Terminé' ? 'green' : 
+                           viewingProject.status === 'En pause' ? 'orange' : 'red'}
+                    style={{ fontSize: '14px', padding: '4px 12px' }}
+                  >
+                    {viewingProject.status || 'En cours'}
+                  </Tag>
+                </Card>
+              </Col>
+              <Col span={12}>
+                <Card size="small" title="Période">
+                  <Space direction="vertical" size="small">
+                    <div>
+                      <Text strong>Début: </Text>
+                      <Text>{viewingProject.date_debut ? dayjs(viewingProject.date_debut).format('DD/MM/YYYY') : '-'}</Text>
+                    </div>
+                    <div>
+                      <Text strong>Fin: </Text>
+                      <Text>{viewingProject.date_fin ? dayjs(viewingProject.date_fin).format('DD/MM/YYYY') : '-'}</Text>
+                    </div>
+                  </Space>
+                </Card>
+              </Col>
+            </Row>
+
+            {/* Budget and Days */}
+            <Row gutter={16}>
+              <Col span={8}>
+                <Card size="small">
+                  <Statistic
+                    title="Budget total"
+                    value={viewingProject.budget || 0}
+                    suffix="€"
+                    prefix={<span style={{ fontSize: '16px' }}>💰</span>}
+                  />
+                </Card>
+              </Col>
+              <Col span={8}>
+                <Card size="small">
+                  <Statistic
+                    title="Nombre de jours"
+                    value={viewingProject.jours || 0}
+                    prefix={<CalendarOutlined />}
+                  />
+                </Card>
+              </Col>
+              {/* <Col span={8}>
+                <Card size="small">
+                  <Statistic
+                    title="Taux journalier moyen"
+                    value={viewingProject.jours > 0 ? (viewingProject.budget / viewingProject.jours).toFixed(0) : 0}
+                    suffix="€/jour"
+                  />
+                </Card>
+              </Col> */}
+            </Row>
+
+           
+
+            {/* Additional Info */}
+            <Card size="small">
+              <Row gutter={[16, 16]}>
+                {viewingProject.description && (
+                  <Col span={24}>
+                    <div>
+                      <Text type="secondary">Description: </Text>
+                      <br />
+                      <Text>{viewingProject.description}</Text>
+                    </div>
+                  </Col>
+                )}
+                {viewingProject.created_at && (
+                  <Col span={12}>
+                    <div>
+                      <Text type="secondary">Date de création: </Text>
+                      <Text>{dayjs(viewingProject.created_at).format('DD/MM/YYYY HH:mm')}</Text>
+                    </div>
+                  </Col>
+                )}
+                {viewingProject.updated_at && (
+                  <Col span={12}>
+                    <div>
+                      <Text type="secondary">Dernière modification: </Text>
+                      <Text>{dayjs(viewingProject.updated_at).format('DD/MM/YYYY HH:mm')}</Text>
+                    </div>
+                  </Col>
+                )}
+              </Row>
+            </Card>
+          </Space>
+        )}
+      </Modal>
+
       {/* Edit Project Modal - Project Information Only */}
       <Modal
         title="Modifier le projet"
@@ -2049,6 +2232,8 @@ const ESNDashboard = () => {
           setProjectConsultants([]);
           setIsViewOnlyMode(false);
           consultantAssignForm.resetFields();
+          setSelectedConsultantStats(null);
+          setConsultantProjectCras([]);
         }}
         footer={null}
         width={700}
@@ -2068,16 +2253,272 @@ const ESNDashboard = () => {
                 <Card
                   key={pc.id_consultant}
                   size="small"
-                  style={{ background: '#fafafa' }}
+                  style={{ 
+                    background: selectedConsultantStats?.id_consultant === pc.id_consultant ? '#e6f7ff' : '#fafafa',
+                    cursor: 'pointer',
+                    border: selectedConsultantStats?.id_consultant === pc.id_consultant ? '1px solid #1890ff' : '1px solid #f0f0f0'
+                  }}
+                  onClick={async () => {
+                    if (selectedConsultantStats?.id_consultant === pc.id_consultant) {
+                      // Toggle off if already selected
+                      setSelectedConsultantStats(null);
+                      setConsultantProjectCras([]);
+                      return;
+                    }
+                    setSelectedConsultantStats(pc);
+                    setConsultantStatsLoading(true);
+                    try {
+                      // Filter CRAs for this consultant on this project
+                      // Need to handle multiple ID formats and type mismatches
+                      const projectId = selectedProjectForConsultant?.id_bdc || selectedProjectForConsultant?.id;
+                      const projectTitle = selectedProjectForConsultant?.project_title;
+                      const consultantId = pc.id_consultant;
+                      
+                      console.log('🔍 Filtering CRAs - Project ID:', projectId, 'Project Title:', projectTitle, 'Consultant ID:', consultantId);
+                      console.log('🔍 Total CRAs available:', cras.length);
+                      if (cras.length > 0) {
+                        console.log('🔍 Sample CRA structure:', cras[0]);
+                      }
+                      
+                      const projectCras = cras.filter(cra => {
+                        // Handle consultant ID comparison (convert to string for safe comparison)
+                        const craConsultantId = String(cra.id_consultan || cra.consultantId || cra.consultant?.id || '');
+                        const targetConsultantId = String(consultantId);
+                        const consultantMatch = craConsultantId === targetConsultantId;
+                        
+                        // Handle project ID comparison - check multiple possible fields
+                        const craBdcId = String(cra.id_bdc || cra.project?.id || '');
+                        const craProjectTitle = cra.project?.titre || '';
+                        const targetProjectId = String(projectId);
+                        const projectMatch = craBdcId === targetProjectId || 
+                                             (projectTitle && craProjectTitle.toLowerCase() === projectTitle.toLowerCase());
+                        
+                        if (consultantMatch) {
+                          console.log('🔍 CRA for consultant:', cra, 'craBdcId:', craBdcId, 'projectMatch:', projectMatch);
+                        }
+                        
+                        return consultantMatch && projectMatch;
+                      });
+                      
+                      console.log('📊 Filtered project CRAs:', projectCras.length, projectCras);
+                      setConsultantProjectCras(projectCras);
+                    } catch (error) {
+                      console.error('Error loading consultant stats:', error);
+                      setConsultantProjectCras([]);
+                    } finally {
+                      setConsultantStatsLoading(false);
+                    }
+                  }}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div>
-                      <Text strong>{pc.prenom} {pc.nom}</Text>
-                      {pc.is_primary && (
-                        <Tag color="blue" style={{ marginLeft: 8 }}>Principal</Tag>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ marginBottom: 4 }}>
+                        <Text strong>{pc.prenom} {pc.nom}</Text>
+                        {pc.is_primary && (
+                          <Tag color="blue" style={{ marginLeft: 8 }}>Principal</Tag>
+                        )}
+                        {pc.role && (
+                          <Tag color="purple" style={{ marginLeft: 4 }}>{pc.role}</Tag>
+                        )}
+                        <Button 
+                          type="link" 
+                          size="small" 
+                          icon={<BarChartOutlined />}
+                          style={{ marginLeft: 8 }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            // Same as card click
+                            if (selectedConsultantStats?.id_consultant === pc.id_consultant) {
+                              setSelectedConsultantStats(null);
+                              setConsultantProjectCras([]);
+                            } else {
+                              setSelectedConsultantStats(pc);
+                              setConsultantStatsLoading(true);
+                              const projectId = selectedProjectForConsultant?.id_bdc || selectedProjectForConsultant?.id;
+                              const projectTitle = selectedProjectForConsultant?.project_title;
+                              const consultantId = pc.id_consultant;
+                              const projectCras = cras.filter(cra => {
+                                const craConsultantId = String(cra.id_consultan || cra.consultantId || cra.consultant?.id || '');
+                                const targetConsultantId = String(consultantId);
+                                const consultantMatch = craConsultantId === targetConsultantId;
+                                const craBdcId = String(cra.id_bdc || cra.project?.id || '');
+                                const craProjectTitle = cra.project?.titre || '';
+                                const targetProjectId = String(projectId);
+                                const projectMatch = craBdcId === targetProjectId || 
+                                                     (projectTitle && craProjectTitle.toLowerCase() === projectTitle.toLowerCase());
+                                return consultantMatch && projectMatch;
+                              });
+                              setConsultantProjectCras(projectCras);
+                              setConsultantStatsLoading(false);
+                            }
+                          }}
+                        >
+                          Stats
+                        </Button>
+                      </div>
+                      <Text type="secondary" style={{ fontSize: '12px' }}>{pc.email}</Text>
+                      <div style={{ marginTop: 4 }}>
+                        <Space size="middle">
+                          {pc.tjm && (
+                            <Text type="secondary" style={{ fontSize: '12px' }}>
+                              <strong>TJM:</strong> {pc.tjm} €
+                            </Text>
+                          )}
+                          {pc.jours && (
+                            <Text type="secondary" style={{ fontSize: '12px' }}>
+                              <strong>Jours:</strong> {pc.jours}
+                            </Text>
+                          )}
+                          {pc.tjm && pc.jours && (
+                            <Text type="secondary" style={{ fontSize: '12px' }}>
+                              <strong>Budget:</strong> {(pc.tjm * pc.jours).toLocaleString()} €
+                            </Text>
+                          )}
+                        </Space>
+                      </div>
+                      
+                      {/* Consultant Stats Section - shown when selected */}
+                      {selectedConsultantStats?.id_consultant === pc.id_consultant && (
+                        <div 
+                          style={{ 
+                            marginTop: 12, 
+                            padding: 12, 
+                            background: '#fff', 
+                            borderRadius: 8,
+                            border: '1px solid #d9d9d9'
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {consultantStatsLoading ? (
+                            <Text>Chargement des statistiques...</Text>
+                          ) : (
+                            <>
+                              <Title level={5} style={{ marginBottom: 12, fontSize: 14 }}>
+                                <BarChartOutlined /> Statistiques sur ce projet
+                              </Title>
+                              
+                              {/* Stats Cards */}
+                              <Row gutter={[8, 8]}>
+                                <Col span={12}>
+                                  <Card size="small" style={{ textAlign: 'center' }}>
+                                    <Statistic
+                                      title="Jours travaillés"
+                                      value={(() => {
+                                        const workedDays = consultantProjectCras
+                                          .filter(cra => ['EVP', 'Validé', 'VE', 'VC'].includes(cra.statut))
+                                          .reduce((sum, cra) => sum + parseFloat(cra.Durée || 0), 0);
+                                        return workedDays.toFixed(1);
+                                      })()}
+                                      suffix={`/ ${pc.jours || 0}`}
+                                      valueStyle={{ fontSize: 18 }}
+                                    />
+                                  </Card>
+                                </Col>
+                                <Col span={12}>
+                                  <Card size="small" style={{ textAlign: 'center' }}>
+                                    <Statistic
+                                      title="Jours restants"
+                                      value={(() => {
+                                        const workedDays = consultantProjectCras
+                                          .filter(cra => ['EVP', 'Validé', 'VE', 'VC'].includes(cra.statut))
+                                          .reduce((sum, cra) => sum + parseFloat(cra.Durée || 0), 0);
+                                        const remaining = (pc.jours || 0) - workedDays;
+                                        return remaining > 0 ? remaining.toFixed(1) : 0;
+                                      })()}
+                                      valueStyle={{ 
+                                        fontSize: 18,
+                                        color: (() => {
+                                          const workedDays = consultantProjectCras
+                                            .filter(cra => ['EVP', 'Validé', 'VE', 'VC'].includes(cra.statut))
+                                            .reduce((sum, cra) => sum + parseFloat(cra.Durée || 0), 0);
+                                          const remaining = (pc.jours || 0) - workedDays;
+                                          return remaining <= 0 ? '#ff4d4f' : remaining < 5 ? '#faad14' : '#52c41a';
+                                        })()
+                                      }}
+                                    />
+                                  </Card>
+                                </Col>
+                                <Col span={12}>
+                                  <Card size="small" style={{ textAlign: 'center' }}>
+                                    <Statistic
+                                      title="Total gagné"
+                                      value={(() => {
+                                        const validatedDays = consultantProjectCras
+                                          .filter(cra => ['Validé', 'VE', 'VC'].includes(cra.statut))
+                                          .reduce((sum, cra) => sum + parseFloat(cra.Durée || 0), 0);
+                                        return ((pc.tjm || 0) * validatedDays).toLocaleString();
+                                      })()}
+                                      suffix="€"
+                                      valueStyle={{ fontSize: 18, color: '#52c41a' }}
+                                    />
+                                  </Card>
+                                </Col>
+                                <Col span={12}>
+                                  <Card size="small" style={{ textAlign: 'center' }}>
+                                    <Statistic
+                                      title="Budget restant"
+                                      value={(() => {
+                                        const totalBudget = (pc.tjm || 0) * (pc.jours || 0);
+                                        const validatedDays = consultantProjectCras
+                                          .filter(cra => ['Validé', 'VE', 'VC'].includes(cra.statut))
+                                          .reduce((sum, cra) => sum + parseFloat(cra.Durée || 0), 0);
+                                        const earned = (pc.tjm || 0) * validatedDays;
+                                        return (totalBudget - earned).toLocaleString();
+                                      })()}
+                                      suffix="€"
+                                      valueStyle={{ fontSize: 18 }}
+                                    />
+                                  </Card>
+                                </Col>
+                              </Row>
+
+                              {/* CRA Status Breakdown */}
+                              <div style={{ marginTop: 12 }}>
+                                <Text strong style={{ fontSize: 12 }}>Statut des CRAs:</Text>
+                                <div style={{ marginTop: 8 }}>
+                                  <Space wrap>
+                                    <Tag color="orange">
+                                      En attente: {consultantProjectCras.filter(c => c.statut === 'EVP').length}
+                                    </Tag>
+                                    <Tag color="green">
+                                      Validés: {consultantProjectCras.filter(c => ['Validé', 'VE', 'VC'].includes(c.statut)).length}
+                                    </Tag>
+                                    <Tag color="red">
+                                      Rejetés: {consultantProjectCras.filter(c => c.statut === 'Rejeté' || c.statut === 'rejete').length}
+                                    </Tag>
+                                  </Space>
+                                </div>
+                              </div>
+
+                              {/* Progress Bar */}
+                              <div style={{ marginTop: 12 }}>
+                                <Text strong style={{ fontSize: 12 }}>Progression:</Text>
+                                <Progress 
+                                  percent={(() => {
+                                    const workedDays = consultantProjectCras
+                                      .filter(cra => ['EVP', 'Validé', 'VE', 'VC'].includes(cra.statut))
+                                      .reduce((sum, cra) => sum + parseFloat(cra.Durée || 0), 0);
+                                    const total = pc.jours || 1;
+                                    return Math.min((workedDays / total) * 100, 100);
+                                  })()}
+                                  strokeColor={(() => {
+                                    const workedDays = consultantProjectCras
+                                      .filter(cra => ['EVP', 'Validé', 'VE', 'VC'].includes(cra.statut))
+                                      .reduce((sum, cra) => sum + parseFloat(cra.Durée || 0), 0);
+                                    const total = pc.jours || 1;
+                                    const percent = (workedDays / total) * 100;
+                                    if (percent >= 100) return '#ff4d4f';
+                                    if (percent >= 80) return '#faad14';
+                                    return '#52c41a';
+                                  })()}
+                                  format={(percent) => `${percent.toFixed(0)}%`}
+                                  style={{ marginTop: 4 }}
+                                />
+                              </div>
+                            </>
+                          )}
+                        </div>
                       )}
-                      <br />
-                      <Text type="secondary">{pc.email}</Text>
                     </div>
                     {!pc.is_primary && (
                       <Popconfirm
@@ -2123,42 +2564,32 @@ const ESNDashboard = () => {
         {/* Add consultant form - only show in add mode */}
         {!isViewOnlyMode && (
         <div>
-          <Title level={5}>Affecter des consultants</Title>
+          <Title level={5}>Affecter un consultant</Title>
           <Form
             form={consultantAssignForm}
             layout="vertical"
             onFinish={async (values) => {
-              const consultantIds = values.consultant_ids || [];
+              const consultantId = values.consultant_id;
+              const tjm = values.tjm;
+              const role = values.role;
+              const jours = values.jours;
               
-              if (consultantIds.length === 0) {
-                message.warning('Veuillez sélectionner au moins un consultant');
+              if (!consultantId) {
+                message.warning('Veuillez sélectionner un consultant');
                 return;
               }
 
-              let successCount = 0;
-              let errorCount = 0;
+              const result = await addConsultantToProject(
+                selectedProjectForConsultant.id_bdc,
+                esnId,
+                consultantId,
+                { tjm, role, jours }
+              );
 
-              // Add each consultant
-              for (const consultantId of consultantIds) {
-                const result = await addConsultantToProject(
-                  selectedProjectForConsultant.id_bdc,
-                  esnId,
-                  consultantId
-                );
-
-                if (result.success) {
-                  successCount++;
-                } else {
-                  errorCount++;
-                }
-              }
-
-              // Show results
-              if (successCount > 0) {
-                message.success(`${successCount} consultant(s) ajouté(s) avec succès`);
-              }
-              if (errorCount > 0) {
-                message.warning(`${errorCount} consultant(s) n'ont pas pu être ajoutés (peut-être déjà assignés)`);
+              if (result.success) {
+                message.success('Consultant ajouté avec succès');
+              } else {
+                message.error(result.error || 'Erreur lors de l\'ajout du consultant (peut-être déjà assigné)');
               }
 
               consultantAssignForm.resetFields();
@@ -2171,19 +2602,17 @@ const ESNDashboard = () => {
             }}
           >
             <Form.Item
-              name="consultant_ids"
-              label="Sélectionner des consultants"
-              rules={[{ required: true, message: 'Veuillez sélectionner au moins un consultant' }]}
+              name="consultant_id"
+              label="Sélectionner un consultant"
+              rules={[{ required: true, message: 'Veuillez sélectionner un consultant' }]}
             >
               <Select
-                mode="multiple"
-                placeholder="Sélectionner un ou plusieurs consultants"
+                placeholder="Sélectionner un consultant"
                 showSearch
                 optionFilterProp="children"
                 filterOption={(input, option) =>
                   option.children.toLowerCase().includes(input.toLowerCase())
                 }
-                maxTagCount="responsive"
               >
                 {consultants
                   .filter(c => !projectConsultants.some(pc => pc.id_consultant === c.ID_collab))
@@ -2194,6 +2623,76 @@ const ESNDashboard = () => {
                   ))}
               </Select>
             </Form.Item>
+            
+            <Form.Item
+              name="role"
+              label="Rôle sur le projet"
+            >
+              <Select placeholder="Sélectionner un rôle">
+                <Select.Option value="Développeur">Développeur</Select.Option>
+                <Select.Option value="Chef de projet">Chef de projet</Select.Option>
+                <Select.Option value="Tech Lead">Tech Lead</Select.Option>
+                <Select.Option value="Architecte">Architecte</Select.Option>
+                <Select.Option value="Consultant">Consultant</Select.Option>
+                <Select.Option value="DevOps">DevOps</Select.Option>
+                <Select.Option value="Analyste">Analyste</Select.Option>
+                <Select.Option value="Autre">Autre</Select.Option>
+              </Select>
+            </Form.Item>
+
+            <Row gutter={16}>
+              <Col span={12}>
+                <Form.Item
+                  name="tjm"
+                  label="TJM (€)"
+                  rules={[{ required: true, message: 'TJM requis' }]}
+                >
+                  <InputNumber
+                    min={0}
+                    style={{ width: '100%' }}
+                    placeholder="500"
+                    formatter={value => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ' ')}
+                    parser={value => value.replace(/\s/g, '')}
+                  />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item
+                  name="jours"
+                  label="Nombre de jours"
+                  rules={[{ required: true, message: 'Nombre de jours requis' }]}
+                >
+                  <InputNumber
+                    min={1}
+                    style={{ width: '100%' }}
+                    placeholder="20"
+                  />
+                </Form.Item>
+              </Col>
+            </Row>
+
+            <div style={{ marginBottom: 16, padding: '8px 12px', background: '#e6f7ff', borderRadius: 4, border: '1px solid #91d5ff' }}>
+              <Form.Item noStyle shouldUpdate={(prevValues, currentValues) => 
+                prevValues.tjm !== currentValues.tjm || prevValues.jours !== currentValues.jours
+              }>
+                {({ getFieldValue }) => {
+                  const tjm = getFieldValue('tjm') || 0;
+                  const jours = getFieldValue('jours') || 0;
+                  const budgetConsultant = tjm * jours;
+                  return (
+                    <Text>
+                      <strong>Budget consultant:</strong> {budgetConsultant.toLocaleString()} €
+                      {selectedProjectForConsultant?.budget && (
+                        <span style={{ marginLeft: 16, color: '#888' }}>
+                          (Projet: {parseFloat(selectedProjectForConsultant.budget).toLocaleString()} €)
+                        </span>
+                      )}
+                    </Text>
+                  );
+                }}
+              </Form.Item>
+            </div>
+
             <Form.Item style={{ marginBottom: 0, textAlign: 'right' }}>
               <Space>
                 <Button onClick={() => {

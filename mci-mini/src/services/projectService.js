@@ -129,12 +129,19 @@ export const getProjectConsultants = async (bdcId) => {
  * @param {number} bdcId - BDC ID
  * @param {number} esnId - ESN ID
  * @param {number} consultantId - Consultant ID to add
+ * @param {Object} options - Additional options
+ * @param {number} options.tjm - TJM (Taux Journalier Moyen) for this consultant on this project
+ * @param {string} options.role - Role of the consultant on this project
+ * @param {number} options.jours - Number of days allocated to this consultant
  */
-export const addConsultantToProject = async (bdcId, esnId, consultantId) => {
+export const addConsultantToProject = async (bdcId, esnId, consultantId, options = {}) => {
   try {
     const response = await api.post(PROJECT_ENDPOINTS.MANAGE_CONSULTANTS(bdcId), {
       esn_id: esnId,
-      consultant_id: consultantId
+      consultant_id: consultantId,
+      tjm: options.tjm || null,
+      role: options.role || null,
+      jours: options.jours || null
     });
     return {
       success: response.data.status || false,

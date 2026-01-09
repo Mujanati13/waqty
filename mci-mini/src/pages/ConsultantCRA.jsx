@@ -102,6 +102,38 @@ const ConsultantCRA = () => {
     return `${hours}h`;
   };
 
+  // Calculate total consumed days for a project (for the current month)
+  const getProjectConsumedDays = (projectId) => {
+    const normalizedProjectId = normalizeId(projectId);
+    const projectImputations = imputations.filter(imp =>
+      normalizeId(imp.id_bdc) === normalizedProjectId
+    );
+    return projectImputations.reduce((sum, imp) => sum + parseFloat(imp.Durée || 0), 0);
+  };
+
+  // Get allocated days for a project
+  const getProjectAllocatedDays = (projectId) => {
+    const normalizedProjectId = normalizeId(projectId);
+    const project = projectsById[normalizedProjectId];
+    return project?.jours || null; // null means unlimited
+  };
+
+  // Check if project has reached its allocated days limit
+  const isProjectLimitReached = (projectId) => {
+    const allocatedDays = getProjectAllocatedDays(projectId);
+    if (allocatedDays === null || allocatedDays === undefined) return false;
+    const consumedDays = getProjectConsumedDays(projectId);
+    return consumedDays >= allocatedDays;
+  };
+
+  // Get remaining days available for a project
+  const getProjectRemainingDays = (projectId) => {
+    const allocatedDays = getProjectAllocatedDays(projectId);
+    if (allocatedDays === null || allocatedDays === undefined) return null;
+    const consumedDays = getProjectConsumedDays(projectId);
+    return Math.max(0, allocatedDays - consumedDays);
+  };
+
   // Check if a day is within the project's contract date range
   const isDayInProjectRange = (day, project) => {
     if (!project) return false;
@@ -450,7 +482,7 @@ const ConsultantCRA = () => {
         return;
       }
 
-      // Validate project period for work entries
+      // Validate project period and allocated days limit for work entries
       if (isWork) {
         const bdcId = values.id_bdc || craForm.getFieldValue('id_bdc');
         if (bdcId) {
@@ -475,6 +507,19 @@ const ConsultantCRA = () => {
               message.error(`La date sélectionnée (${currentDate.format('DD/MM/YYYY')}) est après la fin du projet (${dateFin.format('DD/MM/YYYY')})`);
               setSubmitting(false);
               return;
+            }
+
+            // Check if adding this entry would exceed allocated days for the project
+            const allocatedDays = project.jours;
+            if (allocatedDays !== null && allocatedDays !== undefined) {
+              const consumedDays = getProjectConsumedDays(bdcId);
+              const newProjectTotal = consumedDays + parseFloat(values.Durée);
+              
+              if (newProjectTotal > allocatedDays) {
+                message.error(`Cette entrée dépasserait le quota de jours alloués pour ce projet. Jours alloués: ${allocatedDays}, Déjà consommés: ${consumedDays}, Restants: ${Math.max(0, allocatedDays - consumedDays)}`);
+                setSubmitting(false);
+                return;
+              }
             }
           }
         }
@@ -796,9 +841,37 @@ const ConsultantCRA = () => {
           if (record.isTotal) {
             return <strong style={{ fontSize: '14px' }}>TOTAL</strong>;
           }
+          // Get project info for display
+          const project = projectsById[normalizeId(record.projectId)];
+          const allocatedDays = project?.jours;
+          const consumedDays = getProjectConsumedDays(record.projectId);
+          const isLimitReached = isProjectLimitReached(record.projectId);
+          const dateDebut = project?.date_debut ? dayjs(project.date_debut).format('DD/MM/YY') : null;
+          const dateFin = project?.date_fin ? dayjs(project.date_fin).format('DD/MM/YY') : null;
+          
           return (
             <div style={{ paddingLeft: 16 }}>
               <div style={{ fontWeight: 500 }}>{record.projectTitle}</div>
+              <div style={{ fontSize: '11px', color: '#666', marginTop: 2 }}>
+                {dateDebut && dateFin ? (
+                  <span> {dateDebut} → {dateFin}</span>
+                ) : dateDebut ? (
+                  <span> Début: {dateDebut}</span>
+                ) : dateFin ? (
+                  <span> Fin: {dateFin}</span>
+                ) : null}
+              </div>
+              {allocatedDays && (
+                <div style={{ fontSize: '11px', marginTop: 2 }}>
+                  <span style={{ 
+                    color: isLimitReached ? '#ff4d4f' : consumedDays >= allocatedDays * 0.8 ? '#fa8c16' : '#52c41a',
+                    fontWeight: 500 
+                  }}>
+                     {consumedDays}/{allocatedDays}j
+                    {isLimitReached && ' (Limite)'}
+                  </span>
+                </div>
+              )}
             </div>
           );
         }
@@ -810,7 +883,29 @@ const ConsultantCRA = () => {
         width: 100,
         align: 'center',
         render: (text, record) => {
-          if (record.isAbsence || record.isTotal) return null;
+          if (record.isTotal) return null;
+
+          // Handle absence row
+          if (record.isAbsence) {
+            const absenceImputations = imputations.filter(imp =>
+              imp.type === 'absence' ||
+              ['Congé', 'Formation', 'Maladie', 'Absence'].includes(imp.type_imputation)
+            );
+
+            const submittedStatuses = ['EVP', 'Envoyé', 'Validé', 'VE', 'VC'];
+            const allSent = absenceImputations.length > 0 && absenceImputations.every(imp => submittedStatuses.includes(imp.statut));
+            const someSent = absenceImputations.some(imp => submittedStatuses.includes(imp.statut));
+            const hasCancelled = absenceImputations.some(imp => imp.statut === 'Annulé');
+
+            if (allSent) {
+              return <Tag color="green">Envoyé</Tag>;
+            } else if (hasCancelled) {
+              return <Tag color="red">Annulé - À renvoyer</Tag>;
+            } else if (someSent) {
+              return <Tag color="orange">Partiel</Tag>;
+            }
+            return absenceImputations.length > 0 ? <Tag color="default">À saisir</Tag> : null;
+          }
 
           // Match by exact project ID (normalized for type consistency)
           const projectImputations = imputations.filter(imp =>
@@ -837,10 +932,29 @@ const ConsultantCRA = () => {
         title: 'Total',
         dataIndex: 'total',
         key: 'total',
-        width: 70,
+        width: 90,
         align: 'center',
         className: 'total-column',
-        render: (total) => <strong>{total ? formatDuration(total) : '0h'}</strong>
+        render: (total, record) => {
+          if (record.isAbsence || record.isTotal) {
+            return <strong>{total ? formatDuration(total) : '0h'}</strong>;
+          }
+          const project = projectsById[normalizeId(record.projectId)];
+          const allocatedDays = project?.jours;
+          const consumedDays = total || 0;
+          const isLimitReached = allocatedDays && consumedDays >= allocatedDays;
+          
+          if (allocatedDays) {
+            return (
+              <Tooltip title={`${consumedDays} jour(s) sur ${allocatedDays} alloués`}>
+                <strong style={{ color: isLimitReached ? '#ff4d4f' : undefined }}>
+                  {formatDuration(consumedDays)}/{allocatedDays}j
+                </strong>
+              </Tooltip>
+            );
+          }
+          return <strong>{consumedDays ? formatDuration(consumedDays) : '0h'}</strong>;
+        }
       },
       {
         title: 'Action',
@@ -848,7 +962,38 @@ const ConsultantCRA = () => {
         width: 80,
         align: 'center',
         render: (text, record) => {
-          if (record.isAbsence || record.isTotal) return null;
+          if (record.isTotal) return null;
+
+          // Handle absence row
+          if (record.isAbsence) {
+            const absenceImputations = imputations.filter(imp =>
+              imp.type === 'absence' ||
+              ['Congé', 'Formation', 'Maladie', 'Absence'].includes(imp.type_imputation)
+            );
+
+            const submittedStatuses = ['EVP', 'Envoyé', 'Validé', 'VE', 'VC'];
+            const allSent = absenceImputations.length > 0 && absenceImputations.every(imp => submittedStatuses.includes(imp.statut));
+            const hasImputations = absenceImputations.length > 0;
+
+            if (!hasImputations) return null;
+
+            return (
+              <Button
+                size="small"
+                type={allSent ? "default" : "primary"}
+                icon={<CheckOutlined />}
+                disabled={allSent}
+                onClick={() => handleSendProjectCRA('absence', "Pas d'activité / Absence", absenceImputations)}
+                style={{
+                  backgroundColor: allSent ? '#52c41a' : undefined,
+                  borderColor: allSent ? '#52c41a' : undefined,
+                  color: allSent ? '#fff' : undefined
+                }}
+              >
+                {allSent ? 'Envoyé' : 'Envoyer'}
+              </Button>
+            );
+          }
 
           // Match by exact project ID (normalized for type consistency)
           const projectImputations = imputations.filter(imp =>
@@ -931,7 +1076,7 @@ const ConsultantCRA = () => {
               // Empty cell - allow adding absence only if day not full
               if (isDayFull) {
                 return (
-                  <Tooltip title="Jour complet (8h atteintes)">
+                  <Tooltip title="Jour complet (8h)">
                     <div
                       style={{
                         minHeight: '24px',
@@ -1003,6 +1148,9 @@ const ConsultantCRA = () => {
           // Get project for this row
           const project = projectsById[record.projectId];
           const isInRange = isDayInProjectRange(day, project);
+          const projectLimitReached = isProjectLimitReached(record.projectId);
+          const allocatedDays = project?.jours;
+          const consumedDays = getProjectConsumedDays(record.projectId);
 
           const cellData = record.days?.[day];
           if (!cellData || cellData.duration === 0) {
@@ -1025,6 +1173,27 @@ const ConsultantCRA = () => {
                     }}
                   >
                     <span style={{ color: '#d9d9d9' }}>✕</span>
+                  </div>
+                </Tooltip>
+              );
+            }
+
+            // Project allocated days limit reached
+            if (projectLimitReached) {
+              return (
+                <Tooltip title={`Limite de jours (${consumedDays}/${allocatedDays}j)`}>
+                  <div
+                    style={{
+                      minHeight: '24px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      backgroundColor: '#fff1f0',
+                      cursor: 'not-allowed',
+                      border: '1px dashed #ffa39e'
+                    }}
+                  >
+                    <span style={{ color: '#ff4d4f', fontSize: '10px' }}>🚫</span>
                   </div>
                 </Tooltip>
               );
@@ -1166,7 +1335,8 @@ const ConsultantCRA = () => {
           total: projectTotal,
           days,
           dateDebut: project.date_debut,
-          dateFin: project.date_fin
+          dateFin: project.date_fin,
+          allocatedDays: project.jours // Add allocated days from project
         });
       });
     });
@@ -1227,6 +1397,7 @@ const ConsultantCRA = () => {
         <span><span style={{ display: 'inline-block', width: 16, height: 16, backgroundColor: '#52c41a', borderRadius: 4, marginRight: 8 }}></span>Travail</span>
         <span><span style={{ display: 'inline-block', width: 16, height: 16, backgroundColor: '#fa8c16', borderRadius: 4, marginRight: 8 }}></span>Congé / Absence</span>
         <span><span style={{ display: 'inline-block', width: 16, height: 16, backgroundColor: '#ff4d4f', border: '2px solid #a8071a', borderRadius: 4, marginRight: 8 }}></span>Annulé par ESN</span>
+        <span><span style={{ display: 'inline-block', width: 16, height: 16, backgroundColor: '#fff1f0', border: '1px dashed #ffa39e', borderRadius: 4, marginRight: 8 }}></span>Limite jours</span>
         <span><span style={{ display: 'inline-block', width: 16, height: 16, backgroundColor: '#f5f5f5', borderRadius: 4, marginRight: 8 }}></span>Hors contrat</span>
         <span><span style={{ display: 'inline-block', width: 16, height: 16, backgroundColor: '#f0f0f0', borderRadius: 4, marginRight: 8 }}></span>Week-end</span>
         {showHolidays && <span><span style={{ display: 'inline-block', width: 16, height: 16, backgroundColor: '#fffbe6', border: '1px solid #ffe58f', borderRadius: 4, marginRight: 8 }}></span>Jour férié</span>}

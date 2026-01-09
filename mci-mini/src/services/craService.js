@@ -172,17 +172,38 @@ export const getBDCsByConsultant = async (consultantId, period) => {
         let esnId = project.client_id;
         let esnName = project.client_name;
         
+        // Find the candidature for the current consultant to extract allocated days
+        const consultantCandidature = candidatures.find(c => String(c.id_consultant) === String(consultantId)) || candidatures[0];
+        
         if (candidatures.length > 0) {
           const candidature = candidatures[0];
           esnId = candidature.esn_id || esnId;
           esnName = `ESN ${esnId}`;
         }
         
+        // Extract consultant-specific allocated days from candidature.commentaire
+        // Format: "jours:XX" stored in commentaire field
+        let consultantAllocatedDays = null;
+        if (consultantCandidature?.commentaire) {
+          const joursMatch = consultantCandidature.commentaire.match(/jours:(\d+)/);
+          if (joursMatch) {
+            consultantAllocatedDays = parseInt(joursMatch[1], 10);
+            console.log(`Found consultant-specific jours in commentaire: ${consultantAllocatedDays} for project ${project.titre}`);
+          }
+        }
+        
         // If project has BDCs, process them
         if (bdcList.length > 0) {
           bdcList.forEach(bdc => {
+            // Use consultant-specific days if available, otherwise fall back to BDC jours
+            const jours = consultantAllocatedDays || bdc.jours;
+            console.log(`BDC ${bdc.id_bdc} - Consultant allocated: ${consultantAllocatedDays}, BDC jours: ${bdc.jours}, Final jours: ${jours}`);
+            
             bdcs.push({
               ...bdc,
+              jours: jours, // Override with consultant-specific days
+              jours_consultant: consultantAllocatedDays,
+              jours_total: bdc.jours,
               has_real_bdc: true,
               project_title: project.titre,
               client_name: project.client_name,
@@ -199,10 +220,13 @@ export const getBDCsByConsultant = async (consultantId, period) => {
           const date_debut = candidature.date_disponibilite || project.date_debut;
           let date_fin = null;
           
+          // Use consultant-specific days if available
+          const jours = consultantAllocatedDays || project.jours;
+          
           // Calculate date_fin from date_debut + jours if available
-          if (date_debut && project.jours) {
+          if (date_debut && jours) {
             const startDate = new Date(date_debut);
-            startDate.setDate(startDate.getDate() + parseInt(project.jours));
+            startDate.setDate(startDate.getDate() + parseInt(jours));
             date_fin = startDate.toISOString().split('T')[0];
           }
           
@@ -217,7 +241,9 @@ export const getBDCsByConsultant = async (consultantId, period) => {
             TJM: candidature.tjm,
             date_debut: date_debut,
             date_fin: date_fin,
-            jours: project.jours,
+            jours: jours, // Use consultant-specific days
+            jours_consultant: consultantAllocatedDays,
+            jours_total: project.jours,
             numero_bdc: `AO-${project.id}`,
             statut: project.statut,  // Use project status (set by ESN), not candidature status
             status: project.statut   // Also add as 'status' for compatibility
@@ -257,7 +283,21 @@ export const getAllProjectsByConsultant = async (consultantId) => {
         // Get date_fin: try BDC first, then calculate from project data
         let date_fin = bdc?.date_fin || null;
         let date_debut = bdc?.date_debut || candidature?.date_disponibilite || project.date_debut;
-        let jours = bdc?.jours || project.jours;
+        
+        // Extract consultant-specific allocated days from candidature.commentaire
+        // Format: "jours:XX" stored in commentaire field
+        let consultantAllocatedDays = null;
+        if (candidature?.commentaire) {
+          const joursMatch = candidature.commentaire.match(/jours:(\d+)/);
+          if (joursMatch) {
+            consultantAllocatedDays = parseInt(joursMatch[1], 10);
+            console.log(`Found consultant-specific jours in commentaire: ${consultantAllocatedDays}`);
+          }
+        }
+        
+        // Use consultant-specific days if available, otherwise fall back to BDC/project jours
+        let jours = consultantAllocatedDays || bdc?.jours || project.jours;
+        console.log(`Project ${project.titre} - Consultant allocated: ${consultantAllocatedDays}, BDC jours: ${bdc?.jours}, Final jours: ${jours}`);
         
         // If no date_fin but we have date_debut and jours, calculate it
         if (!date_fin && date_debut && jours) {
@@ -285,7 +325,9 @@ export const getAllProjectsByConsultant = async (consultantId) => {
           statut: projectStatus,  // Add statut field (for compatibility)
           statut_bdc: candidature?.statut || 'N/A',
           numero_bdc: bdc?.numero_bdc || `AO-${project.id}`,
-          jours: jours
+          jours: jours,
+          jours_consultant: consultantAllocatedDays, // Store consultant-specific allocation separately
+          jours_total: bdc?.jours || project.jours // Store total project days for reference
         });
       });
     }
